@@ -1,4 +1,4 @@
-package domain
+package migrate
 
 // Migratable интерфейс для сущностей, участвующих в миграциях
 type Migratable interface {

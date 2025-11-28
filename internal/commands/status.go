@@ -3,9 +3,9 @@ package commands
 import (
 	"context"
 	"fmt"
-	"github.com/amr0ny/migrateme/internal/config"
 	"github.com/amr0ny/migrateme/internal/core"
 	"github.com/amr0ny/migrateme/internal/database"
+	"github.com/amr0ny/migrateme/pkg/config"
 	"github.com/spf13/cobra"
 )
 

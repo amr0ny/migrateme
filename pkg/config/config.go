@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/amr0ny/migrateme/internal/infrastructure/postgres"
-	"github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,7 +39,7 @@ type Config struct {
 	AutoRegister bool     `yaml:"auto_register"`
 	EntityPaths  []string `yaml:"entity_paths"`
 
-	Registry schema.SchemaRegistry `yaml:"-"`
+	Registry migrate.SchemaRegistry `yaml:"-"`
 }
 
 var (
@@ -182,7 +182,7 @@ func loadEnvConfig(cfg *Config) {
 // ==================================================
 
 func initRegistry(cfg *Config) error {
-	cfg.Registry = make(schema.SchemaRegistry)
+	cfg.Registry = make(migrate.SchemaRegistry)
 
 	// Авторегистрация через кодогенерацию отключена в runtime
 	// Вместо этого используется сгенерированный код в internal/migrator
@@ -278,13 +278,13 @@ func expandRecursive(pattern string) ([]string, error) {
 
 // RegisterEntity регистрирует сущность вручную (для обратной совместимости)
 func (c *Config) RegisterEntity(tableName string, entity interface{}) {
-	c.Registry[tableName] = func(table string) schema.TableSchema {
+	c.Registry[tableName] = func(table string) migrate.TableSchema {
 		return buildSchemaFromEntity(entity, table)
 	}
 }
 
 // buildSchemaFromEntity создает схему таблицы из Go структуры
-func buildSchemaFromEntity(entity interface{}, tableName string) schema.TableSchema {
+func buildSchemaFromEntity(entity interface{}, tableName string) migrate.TableSchema {
 	// Эта функция теперь используется только для ручной регистрации
 	// В кодогенерации используется schema.BuildSchema напрямую
 
@@ -296,8 +296,8 @@ func buildSchemaFromEntity(entity interface{}, tableName string) schema.TableSch
 	_ = imports // временно для компиляции
 
 	// Временная заглушка - в реальной реализации здесь должна быть рефлексия
-	return schema.TableSchema{
+	return migrate.TableSchema{
 		TableName: tableName,
-		Columns:   []schema.ColumnMeta{},
+		Columns:   []migrate.ColumnMeta{},
 	}
 }

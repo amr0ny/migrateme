@@ -2,7 +2,7 @@ package commands
 
 import (
 	"fmt"
-	"github.com/amr0ny/migrateme/internal/config"
+	"github.com/amr0ny/migrateme/pkg/config"
 	"os"
 	"path/filepath"
 	"strings"

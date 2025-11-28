@@ -2,28 +2,27 @@ package schema
 
 import (
 	"fmt"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	"hash/crc32"
 	"io"
 	"reflect"
 	"strings"
 	"sync"
-
-	"github.com/amr0ny/migrateme/internal/domain"
 )
 
 var columnCache sync.Map
 
 // BuildSchema строит схему таблицы на основе структуры
-func BuildSchema[T domain.Migratable](table string) TableSchema {
+func BuildSchema[T migrate.Migratable](table string) migrate.TableSchema {
 	var t T
 	typ := reflect.TypeOf(t)
 	if typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
 
-	schema := TableSchema{
+	schema := migrate.TableSchema{
 		TableName: table,
-		Columns:   []ColumnMeta{},
+		Columns:   []migrate.ColumnMeta{},
 	}
 
 	processFields(typ, "", &schema.Columns)
@@ -31,8 +30,8 @@ func BuildSchema[T domain.Migratable](table string) TableSchema {
 }
 
 // BuildSchemaFromRegistry строит схемы из реестра
-func BuildSchemaFromRegistry(registry SchemaRegistry) map[string]TableSchema {
-	schemas := make(map[string]TableSchema)
+func BuildSchemaFromRegistry(registry migrate.SchemaRegistry) map[string]migrate.TableSchema {
+	schemas := make(map[string]migrate.TableSchema)
 	for tableName, builder := range registry {
 		schemas[tableName] = builder(tableName)
 	}
@@ -40,14 +39,14 @@ func BuildSchemaFromRegistry(registry SchemaRegistry) map[string]TableSchema {
 }
 
 // extractColumns извлекает колонки из структуры (для репозиториев)
-func ExtractColumns[T any]() []ColumnMeta {
+func ExtractColumns[T any]() []migrate.ColumnMeta {
 	typeName := reflect.TypeOf((*T)(nil)).Elem().String()
 	checksum := checksumStruct[T]()
 
 	cacheKey := fmt.Sprintf("%s:%d", typeName, checksum)
 
 	if cached, ok := columnCache.Load(cacheKey); ok {
-		return cached.([]ColumnMeta)
+		return cached.([]migrate.ColumnMeta)
 	}
 
 	var t T
@@ -56,7 +55,7 @@ func ExtractColumns[T any]() []ColumnMeta {
 		typ = typ.Elem()
 	}
 
-	cols := make([]ColumnMeta, 0)
+	cols := make([]migrate.ColumnMeta, 0)
 	processFields(typ, "", &cols)
 
 	columnCache.Store(cacheKey, cols)
@@ -64,7 +63,7 @@ func ExtractColumns[T any]() []ColumnMeta {
 }
 
 // processFields рекурсивно обрабатывает поля структуры
-func processFields(t reflect.Type, prefix string, cols *[]ColumnMeta) {
+func processFields(t reflect.Type, prefix string, cols *[]migrate.ColumnMeta) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
@@ -84,7 +83,7 @@ func processFields(t reflect.Type, prefix string, cols *[]ColumnMeta) {
 			columnName = prefix + "_" + name
 		}
 
-		*cols = append(*cols, ColumnMeta{
+		*cols = append(*cols, migrate.ColumnMeta{
 			FieldName:  field.Name,
 			ColumnName: columnName,
 			Idx:        i,
@@ -147,8 +146,8 @@ func inferPgType(fieldType reflect.Type) string {
 }
 
 // parseTag парсит тег db и возвращает имя колонки и атрибуты
-func parseTag(tag string, fieldType reflect.Type) (string, ColumnAttributes) {
-	attrs := ColumnAttributes{}
+func parseTag(tag string, fieldType reflect.Type) (string, migrate.ColumnAttributes) {
+	attrs := migrate.ColumnAttributes{}
 
 	parts := strings.Split(tag, ",")
 	if len(parts) == 0 || parts[0] == "" || parts[0] == "-" {
@@ -175,18 +174,18 @@ func parseTag(tag string, fieldType reflect.Type) (string, ColumnAttributes) {
 			ref := strings.TrimPrefix(p, "fk=")
 			parts := strings.Split(ref, ".")
 			if len(parts) == 2 {
-				attrs.ForeignKey = &ForeignKey{
+				attrs.ForeignKey = &migrate.ForeignKey{
 					Table:  parts[0],
 					Column: parts[1],
 				}
 			}
 		case strings.HasPrefix(p, "delete="):
 			if attrs.ForeignKey != nil {
-				attrs.ForeignKey.OnDelete = OnActionType(strings.ToUpper(strings.TrimPrefix(p, "delete=")))
+				attrs.ForeignKey.OnDelete = migrate.OnActionType(strings.ToUpper(strings.TrimPrefix(p, "delete=")))
 			}
 		case strings.HasPrefix(p, "update="):
 			if attrs.ForeignKey != nil {
-				attrs.ForeignKey.OnUpdate = OnActionType(strings.ToUpper(strings.TrimPrefix(p, "update=")))
+				attrs.ForeignKey.OnUpdate = migrate.OnActionType(strings.ToUpper(strings.TrimPrefix(p, "update=")))
 			}
 		}
 	}
@@ -199,7 +198,7 @@ func parseTag(tag string, fieldType reflect.Type) (string, ColumnAttributes) {
 }
 
 // Вспомогательные функции для работы с PK
-func collectPKs(s TableSchema) []string {
+func collectPKs(s migrate.TableSchema) []string {
 	pk := []string{}
 	for _, c := range s.Columns {
 		if c.Attrs.IsPK {

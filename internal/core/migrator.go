@@ -3,9 +3,10 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/amr0ny/migrateme/internal/config"
 	"github.com/amr0ny/migrateme/internal/database"
 	"github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema"
+	"github.com/amr0ny/migrateme/pkg/config"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	"os"
 	"path/filepath"
 	"sort"
@@ -107,11 +108,11 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 }
 
 func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema.Fetcher) (
-	map[string]schema.TableSchema,
+	map[string]migrate.TableSchema,
 	map[string][]string,
 	error,
 ) {
-	newSchemas := make(map[string]schema.TableSchema)
+	newSchemas := make(map[string]migrate.TableSchema)
 	dependencyGraph := make(map[string][]string)
 
 	for table, builder := range m.config.Registry {
@@ -122,12 +123,12 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema.
 	sort.Strings(allTables)
 
 	// Получаем старые схемы и строим зависимости
-	oldSchemas := make(map[string]schema.TableSchema)
+	oldSchemas := make(map[string]migrate.TableSchema)
 	for _, table := range allTables {
 		oldSchema, err := fetcher.Fetch(ctx, table)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "schema fetch for %s failed — treating as new table: %v\n", table, err)
-			oldSchema = schema.TableSchema{}
+			oldSchema = migrate.TableSchema{}
 		}
 		oldSchemas[table] = oldSchema
 
@@ -149,7 +150,7 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema.
 func (m *Migrator) generateMigrationSQL(
 	ctx context.Context,
 	sortedTables []string,
-	newSchemas map[string]schema.TableSchema,
+	newSchemas map[string]migrate.TableSchema,
 	fetcher *schema.Fetcher,
 ) ([]TableChange, []string, []string) {
 	var changes []TableChange
@@ -159,9 +160,9 @@ func (m *Migrator) generateMigrationSQL(
 	diffGenerator := schema.NewDiffGenerator()
 
 	for _, table := range sortedTables {
-		newSchema := schema.NormalizeSchema(newSchemas[table])
+		newSchema := migrate.NormalizeSchema(newSchemas[table])
 		oldSchema, _ := fetcher.Fetch(ctx, table)
-		oldSchema = schema.NormalizeSchema(oldSchema)
+		oldSchema = migrate.NormalizeSchema(oldSchema)
 
 		diff := diffGenerator.DiffSchemas(oldSchema, newSchema)
 		if diff.IsEmpty() {
@@ -189,7 +190,7 @@ func (m *Migrator) generateMigrationSQL(
 	return changes, allUpStatements, allDownStatements
 }
 
-func (m *Migrator) analyzeTableChange(old, new schema.TableSchema) ChangeType {
+func (m *Migrator) analyzeTableChange(old, new migrate.TableSchema) ChangeType {
 	switch {
 	case len(old.Columns) == 0 && len(new.Columns) > 0:
 		return CreateTable

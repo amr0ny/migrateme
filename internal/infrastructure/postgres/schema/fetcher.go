@@ -3,6 +3,7 @@ package schema
 import (
 	"context"
 	"fmt"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	"github.com/jackc/pgx/v5"
 	"strings"
 )
@@ -18,7 +19,7 @@ type Fetcher struct {
 func NewFetcher(pool PgxQuerier) *Fetcher {
 	return &Fetcher{pool: pool}
 }
-func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) {
+func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema, error) {
 	// ---------- Columns ----------
 	const colsQ = `
 		SELECT
@@ -33,18 +34,18 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) 
 	`
 	rows, err := f.pool.Query(ctx, colsQ, table)
 	if err != nil {
-		return TableSchema{}, fmt.Errorf("query columns: %w", err)
+		return migrate.TableSchema{}, fmt.Errorf("query columns: %w", err)
 	}
 	defer rows.Close()
 
-	colsMap := map[string]ColumnMeta{}
+	colsMap := map[string]migrate.ColumnMeta{}
 
 	for rows.Next() {
 		var name, udtName, dataType, isNullableStr string
 		var colDefault *string
 
 		if err := rows.Scan(&name, &udtName, &dataType, &isNullableStr, &colDefault); err != nil {
-			return TableSchema{}, err
+			return migrate.TableSchema{}, err
 		}
 
 		pgType := udtName
@@ -52,7 +53,7 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) 
 			pgType = dataType
 		}
 
-		attrs := ColumnAttributes{
+		attrs := migrate.ColumnAttributes{
 			PgType:  pgType,
 			NotNull: isNullableStr == "NO",
 		}
@@ -62,7 +63,7 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) 
 			attrs.Default = &d
 		}
 
-		colsMap[name] = ColumnMeta{
+		colsMap[name] = migrate.ColumnMeta{
 			FieldName:  name,
 			ColumnName: name,
 			Attrs:      attrs,
@@ -148,11 +149,11 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) 
 
 			if err := fkRows.Scan(&col, &fTable, &fCol, &onUpdate, &onDelete, &conName); err == nil {
 				if cm, ok := colsMap[col]; ok {
-					cm.Attrs.ForeignKey = &ForeignKey{
+					cm.Attrs.ForeignKey = &migrate.ForeignKey{
 						Table:    fTable,
 						Column:   fCol,
-						OnUpdate: OnActionType(strings.ToUpper(onUpdate)),
-						OnDelete: OnActionType(strings.ToUpper(onDelete)),
+						OnUpdate: migrate.OnActionType(strings.ToUpper(onUpdate)),
+						OnDelete: migrate.OnActionType(strings.ToUpper(onDelete)),
 					}
 					cm.Attrs.ConstraintName = &conName
 					colsMap[col] = cm
@@ -162,12 +163,12 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (TableSchema, error) 
 		fkRows.Close()
 	}
 
-	cols := make([]ColumnMeta, 0, len(colsMap))
+	cols := make([]migrate.ColumnMeta, 0, len(colsMap))
 	for _, col := range colsMap {
 		cols = append(cols, col)
 	}
 
-	return TableSchema{
+	return migrate.TableSchema{
 		TableName: table,
 		Columns:   cols,
 	}, nil

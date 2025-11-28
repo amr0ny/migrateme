@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	"os"
 	"sort"
 	"strings"
@@ -90,7 +90,7 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func getTableNames(schemas map[string]schema.TableSchema) []string {
+func getTableNames(schemas map[string]migrate.TableSchema) []string {
 	tables := make([]string, 0, len(schemas))
 	for table := range schemas {
 		tables = append(tables, table)
@@ -117,7 +117,7 @@ func normalizeName(name string) string {
 }
 
 // Вспомогательные функции для анализа изменений
-func hasNewColumns(old, new schema.TableSchema) bool {
+func hasNewColumns(old, new migrate.TableSchema) bool {
 	oldCols := make(map[string]bool)
 	for _, col := range old.Columns {
 		oldCols[col.ColumnName] = true
@@ -131,7 +131,7 @@ func hasNewColumns(old, new schema.TableSchema) bool {
 	return false
 }
 
-func hasDroppedColumns(old, new schema.TableSchema) bool {
+func hasDroppedColumns(old, new migrate.TableSchema) bool {
 	newCols := make(map[string]bool)
 	for _, col := range new.Columns {
 		newCols[col.ColumnName] = true
@@ -145,7 +145,7 @@ func hasDroppedColumns(old, new schema.TableSchema) bool {
 	return false
 }
 
-func hasTypeChanges(old, new schema.TableSchema) bool {
+func hasTypeChanges(old, new migrate.TableSchema) bool {
 	oldTypes := make(map[string]string)
 	for _, col := range old.Columns {
 		oldTypes[col.ColumnName] = col.Attrs.PgType
@@ -159,13 +159,13 @@ func hasTypeChanges(old, new schema.TableSchema) bool {
 	return false
 }
 
-func hasConstraintChanges(old, new schema.TableSchema) bool {
+func hasConstraintChanges(old, new migrate.TableSchema) bool {
 	oldConstraints := countConstraints(old)
 	newConstraints := countConstraints(new)
 	return oldConstraints != newConstraints
 }
 
-func countConstraints(schema schema.TableSchema) int {
+func countConstraints(schema migrate.TableSchema) int {
 	count := 0
 	for _, col := range schema.Columns {
 		if col.Attrs.Unique || col.Attrs.IsPK || col.Attrs.ForeignKey != nil {
