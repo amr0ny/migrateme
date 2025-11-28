@@ -1,3 +1,7 @@
+// ==========================================
+// discovery.go (исправленная версия)
+// ==========================================
+
 package discovery
 
 import (
@@ -94,7 +98,7 @@ func extractTableComment(doc *ast.CommentGroup) string {
 	return ""
 }
 
-// main file-level discovery
+// main file-level discovery - ИСПРАВЛЕННАЯ ВЕРСИЯ
 func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
@@ -105,30 +109,35 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 	var results []migrate.EntityInfo
 	pkgPath := filepath.Dir(filePath)
 
-	ast.Inspect(file, func(n ast.Node) bool {
-		gen, ok := n.(*ast.GenDecl)
+	// Проходим по всем декларациям в файле
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.TYPE {
-			return true
+			continue
 		}
 
+		// Обрабатываем все спецификации в одной декларации
 		for _, spec := range gen.Specs {
 			ts, ok := spec.(*ast.TypeSpec)
 			if !ok {
 				continue
 			}
+
 			st, ok := ts.Type.(*ast.StructType)
 			if !ok {
 				continue
 			}
 
+			// Пытаемся извлечь имя таблицы из комментариев
 			tn := extractTableComment(gen.Doc)
 			if tn == "" && ts.Doc != nil {
 				tn = extractTableComment(ts.Doc)
 			}
 			if tn == "" {
-				continue
+				continue // пропускаем структуры без аннотации таблицы
 			}
 
+			// Создаем информацию о сущности
 			ent := migrate.EntityInfo{
 				StructName: ts.Name.Name,
 				TableName:  tn,
@@ -136,12 +145,11 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 				FilePath:   filePath,
 			}
 
+			// Расширяем поля (включая встроенные структуры)
 			ent.Fields = ExpandFields(ctx, pkgPath, st, file, map[string]bool{})
 			results = append(results, ent)
 		}
-
-		return true
-	})
+	}
 
 	return results, nil
 }
