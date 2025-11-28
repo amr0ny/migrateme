@@ -35,6 +35,7 @@ package {{.PackageName}}
 import (
 	"github.com/amr0ny/migrateme/pkg/config"
 	"github.com/amr0ny/migrateme/pkg/schema"
+	"github.com/amr0ny/migrateme/pkg/migrate"
 	{{range $alias, $path := .Imports}}
 	{{$alias}} "{{$path}}"{{end}}
 )
@@ -43,7 +44,7 @@ func init() {
 	cfg := config.GetConfig()
 	{{range .Entities}}
 	// Register {{.StructName}}
-	cfg.Registry["{{.TableName}}"] = func(table string) schema.TableSchema {
+	cfg.Registry["{{.TableName}}"] = func(table string) migrate.TableSchema {
 		return schema.BuildSchema[{{if ne .Package "main"}}{{.Package}}.{{end}}{{.StructName}}](table)
 	}{{end}}
 }
@@ -205,44 +206,54 @@ func parseFile(filePath string) ([]EntityInfo, error) {
 	return entities, nil
 }
 
-// collectMethods собирает все методы в файле
-func collectMethods(file *ast.File) map[string]bool {
-	methods := make(map[string]bool)
+// collectMethods собирает методы и привязку к получателю
+func collectMethods(file *ast.File) map[string][]*ast.FuncDecl {
+	methods := make(map[string][]*ast.FuncDecl)
 
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv != nil {
-			methods[fn.Name.Name] = true
+			methods[fn.Name.Name] = append(methods[fn.Name.Name], fn)
 		}
 	}
 
 	return methods
 }
 
-// isMigratableStruct проверяет, является ли структура мигрируемой
-func isMigratableStruct(structName string, st *ast.StructType, file *ast.File, methods map[string]bool) bool {
-	// 1. Проверяем встраивание BaseMigratable
-	if hasBaseMigratableEmbedding(st, file) {
-		return true
+// isMigratableStruct проверяет реализацию интерфейса migrate.Migratable
+func isMigratableStruct(structName string, st *ast.StructType, file *ast.File, methods map[string][]*ast.FuncDecl) bool {
+	required := map[string]bool{
+		"TableName":    false,
+		"IsMigratable": false,
 	}
 
-	// 2. Проверяем наличие метода TableName()
-	if methods["TableName"] {
-		// Проверяем, что TableName принадлежит этой структуре
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "TableName" {
-				if fn.Recv != nil && len(fn.Recv.List) > 0 {
-					if recvType, ok := fn.Recv.List[0].Type.(*ast.StarExpr); ok {
-						if recvIdent, ok := recvType.X.(*ast.Ident); ok && recvIdent.Name == structName {
-							return true
-						}
-					}
+	// ищем методы, принадлежащие именно этой структуре
+	for name, decls := range methods {
+		if _, ok := required[name]; !ok {
+			continue
+		}
+
+		for _, fn := range decls {
+			if fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+
+			recv := fn.Recv.List[0].Type
+
+			switch r := recv.(type) {
+			case *ast.StarExpr: // pointer receiver (*MyStruct)
+				if ident, ok := r.X.(*ast.Ident); ok && ident.Name == structName {
+					required[name] = true
+				}
+			case *ast.Ident: // value receiver (MyStruct)
+				if r.Name == structName {
+					required[name] = true
 				}
 			}
 		}
 	}
 
-	// 3. Проверяем наличие db тегов
-	return hasDBTags(st)
+	// Проверяем, что оба метода найдены
+	return required["TableName"] && required["IsMigratable"]
 }
 
 // hasBaseMigratableEmbedding проверяет встраивание BaseMigratable
