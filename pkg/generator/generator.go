@@ -49,7 +49,7 @@ func init() {
 	{{range .Entities}}
 	// Register {{.StructName}}
 	cfg.Registry["{{.TableName}}"] = func(table string) migrate.TableSchema {
-		return schema.BuildSchema(&{{if ne .Package "main"}}{{.Package}}.{{end}}{{.StructName}}{})
+		return schema.BuildSchema(table, {{if ne .Package "main"}}{{.Package}}.{{end}}{{.StructName}}{})
 	}{{end}}
 }
 `
@@ -93,7 +93,6 @@ func init() {
 
 	return nil
 }
-
 func DiscoverEntitiesForGeneration(paths []string) ([]EntityInfo, error) {
 	var all []EntityInfo
 
