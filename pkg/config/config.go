@@ -41,8 +41,6 @@ var (
 // PUBLIC API
 // ==================================================
 
-// GetConfig возвращает конфиг для использования в сгенерированном коде
-
 func (c *Config) GetDSN() string {
 	if env := os.Getenv("DATABASE_DSN"); env != "" {
 		return env
@@ -138,13 +136,6 @@ func loadEnvConfig(cfg *Config) {
 }
 
 // ==================================================
-// REGISTRY + AUTO DISCOVERY
-// ==================================================
-// ==================================================
-// REGISTRY + AUTO DISCOVERY
-// ==================================================
-
-// ==================================================
 // PATH RESOLUTION WITH GLOBS
 // ==================================================
 
@@ -159,7 +150,6 @@ func ResolveEntityPaths(patterns []string) ([]string, error) {
 		result = append(result, expanded...)
 	}
 
-	// remove duplicates
 	seen := map[string]bool{}
 	out := make([]string, 0, len(result))
 	for _, p := range result {
@@ -173,7 +163,6 @@ func ResolveEntityPaths(patterns []string) ([]string, error) {
 }
 
 func expandPattern(pattern string) ([]string, error) {
-	// поддержка ** (recursive)
 	if containsRecursive(pattern) {
 		return expandRecursive(pattern)
 	}
@@ -181,7 +170,6 @@ func expandPattern(pattern string) ([]string, error) {
 	return filepath.Glob(pattern)
 }
 
-// заменяет ** на regex-like рекурсию
 func containsRecursive(p string) bool {
 	return regexp.MustCompile(`\*\*`).MatchString(p)
 }
@@ -192,7 +180,6 @@ func expandRecursive(pattern string) ([]string, error) {
 		base = strings.Replace(base, "**", "*", 1)
 	}
 
-	// начальная точка
 	root := string([]rune(pattern)[:strings.Index(pattern, "**")])
 
 	var matches []string
@@ -201,12 +188,10 @@ func expandRecursive(pattern string) ([]string, error) {
 			return nil // ignore
 		}
 
-		// Пропускаем скрытые директории и vendor
 		if info.IsDir() && (strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor") {
 			return filepath.SkipDir
 		}
 
-		// Пропускаем тестовые файлы
 		if !info.IsDir() && strings.HasSuffix(info.Name(), "_test.go") {
 			return nil
 		}
@@ -222,38 +207,6 @@ func expandRecursive(pattern string) ([]string, error) {
 	return matches, err
 }
 
-// ==================================================
-// MANUAL REGISTRATION API (для обратной совместимости)
-// ==================================================
-
-// RegisterEntity регистрирует сущность вручную (для обратной совместимости)
-func (c *Config) RegisterEntity(tableName string, entity interface{}) {
-	c.Registry[tableName] = func(table string) migrate.TableSchema {
-		return buildSchemaFromEntity(entity, table)
-	}
-}
-
-// buildSchemaFromEntity создает схему таблицы из Go структуры
-func buildSchemaFromEntity(entity interface{}, tableName string) migrate.TableSchema {
-	// Эта функция теперь используется только для ручной регистрации
-	// В кодогенерации используется schema.BuildSchema напрямую
-
-	// Импортируем reflect для совместимости
-	imports := map[string]string{
-		"reflect": "reflect",
-		"schema":  "github.com/amr0ny/migrateme/pkg/schema",
-	}
-	_ = imports // временно для компиляции
-
-	// Временная заглушка - в реальной реализации здесь должна быть рефлексия
-	return migrate.TableSchema{
-		TableName: tableName,
-		Columns:   []migrate.ColumnMeta{},
-	}
-}
-
-// pkg/config/config.go
-
 type Config struct {
 	Database   DatabaseConfig   `yaml:"database"`
 	Migrations MigrationsConfig `yaml:"migrations"`
@@ -261,11 +214,9 @@ type Config struct {
 
 	EntityPaths []string `yaml:"entity_paths"`
 
-	// Runtime registry - заполняется при загрузке
 	Registry migrate.SchemaRegistry `yaml:"-"`
 }
 
-// Load теперь также инициализирует registry
 func Load(configPath ...string) (*Config, error) {
 	once.Do(func() {
 		cfg, err := loadConfig(configPath...)
@@ -274,7 +225,6 @@ func Load(configPath ...string) (*Config, error) {
 			return
 		}
 
-		// Инициализируем registry при загрузке конфига
 		if err := initRuntimeRegistry(cfg); err != nil {
 			configErr = fmt.Errorf("failed to init runtime registry: %w", err)
 			return
@@ -285,7 +235,6 @@ func Load(configPath ...string) (*Config, error) {
 	return config, configErr
 }
 
-// initRuntimeRegistry находит и регистрирует сущности в runtime
 func initRuntimeRegistry(cfg *Config) error {
 	if len(cfg.EntityPaths) == 0 {
 		return nil
@@ -296,18 +245,15 @@ func initRuntimeRegistry(cfg *Config) error {
 		return fmt.Errorf("failed to resolve entity paths: %w", err)
 	}
 
-	// Обнаруживаем сущности
 	entities, err := discovery.DiscoverEntities(paths)
 	if err != nil {
 		return fmt.Errorf("failed to discover entities: %w", err)
 	}
 
-	// Создаем registry
 	cfg.Registry = make(migrate.SchemaRegistry)
 	for _, entity := range entities {
-		entity := entity // capture range variable
 		cfg.Registry[entity.TableName] = func(table string) migrate.TableSchema {
-			return schema.BuildSchemaFromEntity(entity.TypeInfo, table)
+			return schema.BuildSchema(entity)
 		}
 	}
 

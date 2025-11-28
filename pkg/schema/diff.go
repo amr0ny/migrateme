@@ -6,14 +6,12 @@ import (
 	"strings"
 )
 
-// DiffGenerator генерирует различия между схемами
 type DiffGenerator struct{}
 
 func NewDiffGenerator() *DiffGenerator {
 	return &DiffGenerator{}
 }
 
-// DiffSchemas сравнивает две схемы и возвращает разницу
 func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableDiff {
 	oldCols := makeColumnMap(old.Columns)
 	newCols := makeColumnMap(new.Columns)
@@ -23,12 +21,10 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 	pushUp := func(s string) { mig.Up = append(mig.Up, s) }
 	pushDownFront := func(s string) { mig.Down = append([]string{s}, mig.Down...) }
 
-	// CREATE TABLE если старая схема пустая
 	if len(oldCols) == 0 && len(newCols) > 0 {
 		return g.generateCreateTableDiff(new)
 	}
 
-	// 1) Добавленные и измененные колонки
 	for name, newCol := range newCols {
 		oldCol, exists := oldCols[name]
 		if !exists {
@@ -38,14 +34,12 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 		g.handleChangedColumn(&mig, new.TableName, oldCol, newCol, pushUp, pushDownFront)
 	}
 
-	// 2) Удаленные колонки
 	for name, oldCol := range oldCols {
 		if _, exists := newCols[name]; !exists {
 			g.handleRemovedColumn(&mig, old.TableName, oldCol, pushUp, pushDownFront)
 		}
 	}
 
-	// 3) Изменения первичного ключа
 	oldPKs := collectPKs(old)
 	newPKs := collectPKs(new)
 	if !stringSlicesEqual(oldPKs, newPKs) {
@@ -55,7 +49,6 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 	return mig
 }
 
-// generateCreateTableDiff создает diff для новой таблицы
 func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate.TableDiff {
 	mig := migrate.TableDiff{}
 
@@ -78,13 +71,11 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 		}
 	}
 
-	// Добавляем PRIMARY KEY constraint
 	if len(pkCols) > 0 {
 		columns = append(columns, fmt.Sprintf("CONSTRAINT %s PRIMARY KEY (%s)",
 			quoteIdent(pkConstraintName(new.TableName)), strings.Join(pkCols, ", ")))
 	}
 
-	// Добавляем остальные constraints
 	columns = append(columns, constraints...)
 
 	createStmt := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n)",
@@ -94,7 +85,6 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 	mig.Down = append([]string{fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE",
 		quoteIdent(new.TableName))}, mig.Down...)
 
-	// Добавляем foreign keys отдельно
 	for _, c := range new.Columns {
 		if c.Attrs.ForeignKey != nil {
 			g.addForeignKey(&mig, new.TableName, c)
@@ -104,7 +94,6 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 	return mig
 }
 
-// handleAddedColumn обрабатывает добавление новой колонки
 func (g *DiffGenerator) handleAddedColumn(mig *migrate.TableDiff, table string, col migrate.ColumnMeta, pushUp, pushDownFront func(string)) {
 	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s",
 		quoteIdent(table), quoteIdent(col.ColumnName), col.Attrs.PgType)
@@ -113,12 +102,11 @@ func (g *DiffGenerator) handleAddedColumn(mig *migrate.TableDiff, table string, 
 		stmt += " DEFAULT " + *col.Attrs.Default
 	}
 
-	// NOT NULL handling
 	if col.Attrs.NotNull {
 		if col.Attrs.Default == nil {
-			// Add column without NOT NULL first
+
 			pushUp(stmt)
-			// Then add NOT NULL constraint safely
+
 			guard := fmt.Sprintf(`DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM %s WHERE %s IS NULL) THEN
     ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;
@@ -126,7 +114,7 @@ func (g *DiffGenerator) handleAddedColumn(mig *migrate.TableDiff, table string, 
 END $$;`, quoteIdent(table), quoteIdent(col.ColumnName), quoteIdent(table), quoteIdent(col.ColumnName))
 			pushUp(guard)
 		} else {
-			// Default present - can add with NOT NULL directly
+
 			stmt += " NOT NULL"
 			pushUp(stmt)
 		}
@@ -134,24 +122,20 @@ END $$;`, quoteIdent(table), quoteIdent(col.ColumnName), quoteIdent(table), quot
 		pushUp(stmt)
 	}
 
-	// Down: drop column
 	pushDownFront(fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s",
 		quoteIdent(table), quoteIdent(col.ColumnName)))
 
-	// Unique constraint
 	if col.Attrs.Unique {
 		g.addUniqueConstraint(mig, table, col, pushUp, pushDownFront)
 	}
 
-	// Foreign key
 	if col.Attrs.ForeignKey != nil {
 		g.addForeignKey(mig, table, col)
 	}
 }
 
-// handleChangedColumn обрабатывает изменения существующей колонки
 func (g *DiffGenerator) handleChangedColumn(mig *migrate.TableDiff, table string, oldCol, newCol migrate.ColumnMeta, pushUp, pushDownFront func(string)) {
-	// Type change
+
 	if oldCol.Attrs.PgType != newCol.Attrs.PgType {
 		up := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s USING %s::%s",
 			quoteIdent(table), quoteIdent(newCol.ColumnName), newCol.Attrs.PgType,
@@ -163,10 +147,9 @@ func (g *DiffGenerator) handleChangedColumn(mig *migrate.TableDiff, table string
 		pushDownFront(down)
 	}
 
-	// Nullability change
 	if oldCol.Attrs.NotNull != newCol.Attrs.NotNull {
 		if newCol.Attrs.NotNull {
-			// Set NOT NULL safely
+
 			guard := fmt.Sprintf(`DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM %s WHERE %s IS NULL) THEN
     ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;
@@ -178,7 +161,7 @@ END $$;`, quoteIdent(table), quoteIdent(newCol.ColumnName), quoteIdent(table), q
 		} else {
 			pushUp(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL",
 				quoteIdent(table), quoteIdent(newCol.ColumnName)))
-			// Down: careful NOT NULL restoration
+
 			pushDownFront(fmt.Sprintf(`DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM %s WHERE %s IS NULL) THEN
     ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;
@@ -187,7 +170,6 @@ END $$;`, quoteIdent(table), quoteIdent(newCol.ColumnName), quoteIdent(table), q
 		}
 	}
 
-	// Default value change
 	oldDef := ""
 	if oldCol.Attrs.Default != nil {
 		oldDef = *oldCol.Attrs.Default
@@ -204,7 +186,7 @@ END $$;`, quoteIdent(table), quoteIdent(newCol.ColumnName), quoteIdent(table), q
 			pushUp(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT",
 				quoteIdent(table), quoteIdent(newCol.ColumnName)))
 		}
-		// Down: revert default
+
 		if oldCol.Attrs.Default != nil {
 			pushDownFront(fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s",
 				quoteIdent(table), quoteIdent(newCol.ColumnName), oldDef))
@@ -214,7 +196,6 @@ END $$;`, quoteIdent(table), quoteIdent(newCol.ColumnName), quoteIdent(table), q
 		}
 	}
 
-	// Unique constraint change
 	if oldCol.Attrs.Unique != newCol.Attrs.Unique {
 		if newCol.Attrs.Unique {
 			g.addUniqueConstraint(mig, table, newCol, pushUp, pushDownFront)
@@ -223,17 +204,14 @@ END $$;`, quoteIdent(table), quoteIdent(newCol.ColumnName), quoteIdent(table), q
 		}
 	}
 
-	// Foreign key change
 	g.handleForeignKeyChanges(mig, table, oldCol, newCol, pushUp, pushDownFront)
 }
 
-// handleRemovedColumn обрабатывает удаление колонки
 func (g *DiffGenerator) handleRemovedColumn(mig *migrate.TableDiff, table string, oldCol migrate.ColumnMeta, pushUp, pushDownFront func(string)) {
-	// Up: drop column
+
 	pushUp(fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s",
 		quoteIdent(table), quoteIdent(oldCol.ColumnName)))
 
-	// Down: recreate column with previous definition
 	down := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s",
 		quoteIdent(table), quoteIdent(oldCol.ColumnName), oldCol.Attrs.PgType)
 
@@ -244,7 +222,6 @@ func (g *DiffGenerator) handleRemovedColumn(mig *migrate.TableDiff, table string
 		down += " NOT NULL"
 	}
 
-	// Restore constraints in down migration
 	if oldCol.Attrs.IsPK {
 		down += fmt.Sprintf("; ALTER TABLE %s ADD CONSTRAINT %s PRIMARY KEY (%s)",
 			quoteIdent(table), quoteIdent(pkConstraintName(table)), quoteIdent(oldCol.ColumnName))
@@ -270,7 +247,6 @@ func (g *DiffGenerator) handleRemovedColumn(mig *migrate.TableDiff, table string
 	pushDownFront(down)
 }
 
-// Вспомогательные методы для constraints
 func (g *DiffGenerator) addUniqueConstraint(mig *migrate.TableDiff, table string, col migrate.ColumnMeta, pushUp, pushDownFront func(string)) {
 	constrName := uniqueConstraintName(table, col.ColumnName)
 	addUnique := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s UNIQUE (%s)",
@@ -312,17 +288,17 @@ func (g *DiffGenerator) handleForeignKeyChanges(mig *migrate.TableDiff, table st
 	}
 
 	if fkChanged {
-		// Drop old FK if present
+
 		if oldFK != nil {
 			constrName := g.getConstraintName(oldCol, fkConstraintName(table, oldCol.ColumnName))
 			pushUp(dropConstraintIfExists(table, constrName))
-			// Down: restore old FK
+
 			pushDownFront(fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s ON UPDATE %s",
 				quoteIdent(table), quoteIdent(constrName), quoteIdent(oldCol.ColumnName),
 				quoteIdent(oldFK.Table), quoteIdent(oldFK.Column),
 				getForeignKeyAction(oldFK.OnDelete), getForeignKeyAction(oldFK.OnUpdate)))
 		}
-		// Add new FK if present
+
 		if newFK != nil {
 			g.addForeignKey(mig, table, newCol)
 		}
@@ -330,14 +306,14 @@ func (g *DiffGenerator) handleForeignKeyChanges(mig *migrate.TableDiff, table st
 }
 
 func (g *DiffGenerator) handlePKChanges(mig *migrate.TableDiff, table string, oldPKs, newPKs []string, pushUp, pushDownFront func(string)) {
-	// Drop old PK
+
 	if len(oldPKs) > 0 {
 		pushUp(fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s",
 			quoteIdent(table), quoteIdent(pkConstraintName(table))))
 		pushDownFront(fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s PRIMARY KEY (%s)",
 			quoteIdent(table), quoteIdent(pkConstraintName(table)), strings.Join(oldPKs, ", ")))
 	}
-	// Add new PK
+
 	if len(newPKs) > 0 {
 		pushUp(fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s PRIMARY KEY (%s)",
 			quoteIdent(table), quoteIdent(pkConstraintName(table)), strings.Join(newPKs, ", ")))
@@ -346,7 +322,6 @@ func (g *DiffGenerator) handlePKChanges(mig *migrate.TableDiff, table string, ol
 	}
 }
 
-// Вспомогательные методы
 func (g *DiffGenerator) buildColumnDefinition(col migrate.ColumnMeta) string {
 	def := fmt.Sprintf("%s %s", quoteIdent(col.ColumnName), col.Attrs.PgType)
 
@@ -368,7 +343,6 @@ func (g *DiffGenerator) getConstraintName(col migrate.ColumnMeta, defaultName st
 	return defaultName
 }
 
-// Вспомогательные функции
 func makeColumnMap(columns []migrate.ColumnMeta) map[string]migrate.ColumnMeta {
 	m := make(map[string]migrate.ColumnMeta)
 	for _, col := range columns {

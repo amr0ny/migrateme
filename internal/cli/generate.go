@@ -1,5 +1,3 @@
-// internal/cli/generate.go
-
 package cli
 
 import (
@@ -30,7 +28,6 @@ func NewGenerateCommand() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Проверяем, что сущности найдены
 			if len(cfg.Registry) == 0 {
 				if len(cfg.EntityPaths) == 0 {
 					return fmt.Errorf("no entity paths configured. Please set 'entity_paths' in config")

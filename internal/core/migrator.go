@@ -54,32 +54,27 @@ const (
 )
 
 func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*GenerateResult, error) {
-	// Проверяем наличие непримененных миграций
 	if hasUnapplied, err := m.hasUnappliedMigrations(ctx); err != nil {
 		return nil, fmt.Errorf("failed to check for unapplied migrations: %w", err)
 	} else if hasUnapplied {
 		return nil, fmt.Errorf("there are unapplied migrations. Please run 'migrate run' before generating new migrations")
 	}
 
-	// Создаем директорию для миграций
 	if err := os.MkdirAll(m.config.GetMigrationsDir(), 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create migrations directory: %w", err)
 	}
 
-	// Получаем схемы и строим зависимости
 	schemaFetcher := schema2.NewFetcher(m.db.Pool)
 	newSchemas, dependencyGraph, err := m.buildSchemaDependencies(ctx, schemaFetcher)
 	if err != nil {
 		return nil, err
 	}
 
-	// Топологическая сортировка
 	sortedTables, err := topologicalSort(dependencyGraph, getTableNames(newSchemas))
 	if err != nil {
 		return nil, fmt.Errorf("failed to sort tables topologically: %w", err)
 	}
 
-	// Генерируем SQL для изменений
 	changes, upStatements, downStatements := m.generateMigrationSQL(ctx, sortedTables, newSchemas, schemaFetcher)
 	if len(upStatements) == 0 {
 		return &GenerateResult{
@@ -88,7 +83,6 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		}, nil
 	}
 
-	// Создаем файлы миграций
 	if opts.DryRun {
 		return &GenerateResult{
 			CreatedFiles: []string{},
@@ -122,7 +116,6 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 	allTables := getTableNames(newSchemas)
 	sort.Strings(allTables)
 
-	// Получаем старые схемы и строим зависимости
 	oldSchemas := make(map[string]migrate.TableSchema)
 	for _, table := range allTables {
 		oldSchema, err := fetcher.Fetch(ctx, table)
@@ -132,7 +125,6 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 		}
 		oldSchemas[table] = oldSchema
 
-		// Строим граф зависимостей
 		newSchema := newSchemas[table]
 		for _, column := range newSchema.Columns {
 			if column.Attrs.ForeignKey != nil {
@@ -169,7 +161,6 @@ func (m *Migrator) generateMigrationSQL(
 			continue
 		}
 
-		// Анализируем тип изменений
 		changeType := m.analyzeTableChange(oldSchema, newSchema)
 		changes = append(changes, TableChange{
 			TableName: table,
@@ -177,7 +168,6 @@ func (m *Migrator) generateMigrationSQL(
 			Details:   fmt.Sprintf("%d changes", len(diff.Up)),
 		})
 
-		// Добавляем SQL statements
 		allUpStatements = append(allUpStatements, fmt.Sprintf("-- Changes for table: %s", table))
 		allUpStatements = append(allUpStatements, diff.Up...)
 		allUpStatements = append(allUpStatements, "")

@@ -18,7 +18,6 @@ func (m *Migrator) Run(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to list migration files: %w", err)
 	}
 
-	// Фильтруем только up-файлы
 	upFiles := filterUpFiles(files)
 	migrationBases := extractMigrationBases(upFiles)
 

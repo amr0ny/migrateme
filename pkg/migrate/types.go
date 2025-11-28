@@ -4,34 +4,20 @@ import (
 	"strings"
 )
 
-// Migratable интерфейс для сущностей, участвующих в миграциях
-type Migratable interface {
-	// TableName возвращает имя таблицы в БД
-	TableName() string
-	// IsMigratable маркерный метод для идентификации мигрируемых сущностей
-	IsMigratable() bool
+type EntityInfo struct {
+	StructName string
+	TableName  string
+	Package    string
+	FilePath   string
+	Fields     []FieldInfo
 }
 
-// BaseMigratable базовая реализация Migratable
-type BaseMigratable struct {
-	tableName string
-}
-
-// NewBaseMigratable создает новую базовую мигрируемую сущность
-func NewBaseMigratable(tableName string) BaseMigratable {
-	return BaseMigratable{
-		tableName: tableName,
-	}
-}
-
-// TableName возвращает имя таблицы
-func (b BaseMigratable) TableName() string {
-	return b.tableName
-}
-
-// IsMigratable всегда возвращает true для маркировки
-func (b BaseMigratable) IsMigratable() bool {
-	return true
+type FieldInfo struct {
+	FieldName  string
+	ColumnName string
+	Idx        int
+	ForeignKey string
+	RawTag     string
 }
 
 type TableSchema struct {
@@ -39,7 +25,6 @@ type TableSchema struct {
 	Columns   []ColumnMeta
 }
 
-// ColumnMeta метаданные колонки
 type ColumnMeta struct {
 	FieldName  string
 	ColumnName string
@@ -56,7 +41,6 @@ const (
 	NoAction OnActionType = "NO ACTION"
 )
 
-// ForeignKey внешний ключ
 type ForeignKey struct {
 	Table    string
 	Column   string
@@ -64,7 +48,6 @@ type ForeignKey struct {
 	OnUpdate OnActionType
 }
 
-// ColumnAttributes атрибуты колонки
 type ColumnAttributes struct {
 	PgType         string
 	NotNull        bool
@@ -75,7 +58,6 @@ type ColumnAttributes struct {
 	ConstraintName *string
 }
 
-// TableDiff разница между схемами
 type TableDiff struct {
 	Up   []string
 	Down []string
@@ -85,10 +67,8 @@ func (d TableDiff) IsEmpty() bool {
 	return len(d.Up) == 0 && len(d.Down) == 0
 }
 
-// SchemaRegistry реестр схем таблиц
 type SchemaRegistry map[string]func(string) TableSchema
 
-// NormalizeSchema нормализует схему для сравнения
 func NormalizeSchema(s TableSchema) TableSchema {
 	out := s
 
@@ -123,6 +103,7 @@ func normalizeAction(a OnActionType) OnActionType {
 	if a == "" {
 		return NoAction
 	}
+
 	return a
 }
 

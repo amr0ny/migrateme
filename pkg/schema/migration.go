@@ -1,6 +1,5 @@
 package schema
 
-// WrapTx оборачивает набор SQL statements в транзакцию
 func WrapTx(statements []string) string {
 	if len(statements) == 0 {
 		return ""

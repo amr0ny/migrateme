@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-// topologicalSort и другие utility функции
 func topologicalSort(graph map[string][]string, allTables []string) ([]string, error) {
 	inDegree := make(map[string]int)
 	for _, table := range allTables {
@@ -116,7 +115,6 @@ func normalizeName(name string) string {
 	return strings.Trim(name, "_")
 }
 
-// Вспомогательные функции для анализа изменений
 func hasNewColumns(old, new migrate.TableSchema) bool {
 	oldCols := make(map[string]bool)
 	for _, col := range old.Columns {
