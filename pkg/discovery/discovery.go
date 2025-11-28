@@ -27,8 +27,7 @@ func DiscoverEntities(paths []string) ([]migrate.EntityInfo, error) {
 				continue
 			}
 			if _, ok := seenTables[tnLower]; ok {
-
-				fmt.Printf("Warning: duplicate table name detected '%s' in %s — skipping\n", ent.TableName, ent.FilePath)
+				fmt.Printf("Warning: duplicate table name '%s' in %s — skipping\n", ent.TableName, ent.FilePath)
 				continue
 			}
 			seenTables[tnLower] = struct{}{}
@@ -57,7 +56,6 @@ func discoverInDirectory(dir string) ([]migrate.EntityInfo, error) {
 			return nil
 		}
 		if info.IsDir() {
-
 			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
 				return filepath.SkipDir
 			}
@@ -92,7 +90,6 @@ func extractTableNameFromComment(doc *ast.CommentGroup) string {
 		return ""
 	}
 	for _, c := range doc.List {
-
 		text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
 		text = strings.TrimSpace(strings.TrimPrefix(text, "/*"))
 		text = strings.TrimSpace(strings.TrimSuffix(text, "*/"))
@@ -104,6 +101,83 @@ func extractTableNameFromComment(doc *ast.CommentGroup) string {
 	}
 	return ""
 }
+
+// ------------------------- RECURSIVE FIELD EXTRACTOR -------------------------
+
+func expandStructFields(st *ast.StructType, file *ast.File, pkg string, filePath string, visited map[string]bool) []migrate.FieldInfo {
+	var fields []migrate.FieldInfo
+
+	for _, field := range st.Fields.List {
+		// Field name
+		var name string
+		if len(field.Names) > 0 {
+			name = field.Names[0].Name
+		}
+
+		// Try detect struct type and recurse
+		switch t := field.Type.(type) {
+
+		case *ast.StructType:
+			// Inline struct
+			if visited["inline"] {
+				continue
+			}
+			visited["inline"] = true
+			fields = append(fields, expandStructFields(t, file, pkg, filePath, visited)...)
+
+		case *ast.Ident:
+			// Struct defined in same file
+			if obj := t.Obj; obj != nil {
+				if st2, ok := obj.Decl.(*ast.TypeSpec); ok {
+					if inner, ok2 := st2.Type.(*ast.StructType); ok2 {
+						key := pkg + "." + st2.Name.Name
+						if visited[key] {
+							continue
+						}
+						visited[key] = true
+						fields = append(fields, expandStructFields(inner, file, pkg, filePath, visited)...)
+						continue
+					}
+				}
+			}
+
+		case *ast.SelectorExpr:
+			// Imported type — skip or handle if needed
+		}
+
+		// Extract db tag if exists
+		dbTag := ""
+		fk := ""
+		rawTag := ""
+		if field.Tag != nil {
+			raw := strings.Trim(field.Tag.Value, "`")
+			rawTag = raw
+			if m := regexp.MustCompile(`db\s*:\s*"([^"]*)"`).FindStringSubmatch(raw); len(m) == 2 {
+				dbTag = strings.Split(m[1], ",")[0]
+			}
+			if m := regexp.MustCompile(`fk=([^,"]+)`).FindStringSubmatch(raw); len(m) == 2 {
+				fk = m[1]
+			}
+		}
+
+		// Skip fields without db-tag
+		if dbTag == "" {
+			continue
+		}
+
+		fields = append(fields, migrate.FieldInfo{
+			FieldName:  name,
+			ColumnName: dbTag,
+			Idx:        len(fields),
+			ForeignKey: fk,
+			RawTag:     rawTag,
+		})
+	}
+
+	return fields
+}
+
+// ------------------------- MAIN FILE PARSER -------------------------
 
 func discoverInFile(filePath string) ([]migrate.EntityInfo, error) {
 	fset := token.NewFileSet()
@@ -130,19 +204,14 @@ func discoverInFile(filePath string) ([]migrate.EntityInfo, error) {
 				continue
 			}
 
+			// Get table name
 			tableName := extractTableNameFromComment(gen.Doc)
-
 			if tableName == "" {
 				tableName = extractTableNameFromComment(ts.Doc)
 			}
-
-			if tableName == "" {
-
-				if ts.Comment != nil {
-					tableName = extractTableNameFromComment(ts.Comment)
-				}
+			if tableName == "" && ts.Comment != nil {
+				tableName = extractTableNameFromComment(ts.Comment)
 			}
-
 			if tableName == "" {
 				continue
 			}
@@ -154,63 +223,9 @@ func discoverInFile(filePath string) ([]migrate.EntityInfo, error) {
 				FilePath:   filePath,
 			}
 
-			for i, field := range st.Fields.List {
-
-				names := field.Names
-				var fieldName string
-				if len(names) == 0 {
-
-					switch expr := field.Type.(type) {
-					case *ast.Ident:
-						fieldName = expr.Name
-					case *ast.SelectorExpr:
-
-						if id, ok := expr.X.(*ast.Ident); ok {
-							fieldName = id.Name + "." + expr.Sel.Name
-						} else {
-							fieldName = expr.Sel.Name
-						}
-					default:
-						fieldName = "embedded"
-					}
-				} else {
-					fieldName = names[0].Name
-				}
-
-				columnName := ""
-				fk := ""
-				rawTag := ""
-				if field.Tag != nil {
-					tagValue := strings.Trim(field.Tag.Value, "`")
-					rawTag = tagValue
-					if m := regexp.MustCompile(`db\s*:\s*"([^"]*)"`).FindStringSubmatch(tagValue); len(m) == 2 {
-						dbInner := m[1]
-						parts := strings.Split(dbInner, ",")
-						if len(parts) > 0 {
-							if parts[0] != "-" && parts[0] != "" {
-								columnName = parts[0]
-							}
-						}
-						for _, p := range parts {
-							p = strings.TrimSpace(p)
-							if strings.HasPrefix(p, "fk=") {
-								fk = strings.TrimPrefix(p, "fk=")
-								fk = strings.Trim(fk, `"`)
-							}
-						}
-					} else {
-					}
-				}
-
-				fi := migrate.FieldInfo{
-					FieldName:  fieldName,
-					ColumnName: columnName,
-					Idx:        i,
-					ForeignKey: fk,
-					RawTag:     rawTag,
-				}
-				ent.Fields = append(ent.Fields, fi)
-			}
+			// NEW: recursive field expansion
+			visited := map[string]bool{}
+			ent.Fields = expandStructFields(st, node, pkgName, filePath, visited)
 
 			entities = append(entities, ent)
 		}
