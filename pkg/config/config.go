@@ -245,7 +245,11 @@ func initRuntimeRegistry(cfg *Config) error {
 		return fmt.Errorf("failed to resolve entity paths: %w", err)
 	}
 
-	entities, err := discovery.DiscoverEntities(paths)
+	ctx, err := discovery.LoadPackages()
+	if err != nil {
+		return fmt.Errorf("failed to load packages: %w", err)
+	}
+	entities, err := discovery.DiscoverEntities(ctx, paths)
 	if err != nil {
 		return fmt.Errorf("failed to discover entities: %w", err)
 	}

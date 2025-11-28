@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -19,12 +20,16 @@ type DiscoverContext struct {
 	Packages map[string]*PackageInfo // key = import path
 }
 
-func LoadPackages(root string) (*DiscoverContext, error) {
+func LoadPackages() (*DiscoverContext, error) {
+	root, err := findModuleRoot()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find module root: %w", err)
+	}
 	ctx := &DiscoverContext{
 		Packages: map[string]*PackageInfo{},
 	}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
+	err = filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
 		if info.IsDir() {
 			// skip vendor, hidden, build dirs
 			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
@@ -83,4 +88,23 @@ func LoadPackages(root string) (*DiscoverContext, error) {
 	}
 
 	return ctx, nil
+}
+
+func findModuleRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found")
+		}
+		dir = parent
+	}
 }
