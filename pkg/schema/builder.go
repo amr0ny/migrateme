@@ -13,9 +13,8 @@ import (
 var columnCache sync.Map
 
 // BuildSchema строит схему таблицы на основе структуры
-func BuildSchema[T any](table string) migrate.TableSchema {
-	var t T
-	typ := reflect.TypeOf(t)
+func BuildSchema(table string, model interface{}) migrate.TableSchema {
+	typ := reflect.TypeOf(model)
 	if typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
@@ -39,20 +38,19 @@ func BuildSchemaFromRegistry(registry migrate.SchemaRegistry) map[string]migrate
 }
 
 // extractColumns извлекает колонки из структуры (для репозиториев)
-func ExtractColumns[T any]() []migrate.ColumnMeta {
-	typeName := reflect.TypeOf((*T)(nil)).Elem().String()
-	checksum := checksumStruct[T]()
+func ExtractColumns(model interface{}) []migrate.ColumnMeta {
+	typ := reflect.TypeOf(model)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	typeName := typ.String()
+	checksum := checksumStruct(model)
 
 	cacheKey := fmt.Sprintf("%s:%d", typeName, checksum)
 
 	if cached, ok := columnCache.Load(cacheKey); ok {
 		return cached.([]migrate.ColumnMeta)
-	}
-
-	var t T
-	typ := reflect.TypeOf(t)
-	if typ.Kind() == reflect.Ptr {
-		typ = typ.Elem()
 	}
 
 	cols := make([]migrate.ColumnMeta, 0)
@@ -93,9 +91,8 @@ func processFields(t reflect.Type, prefix string, cols *[]migrate.ColumnMeta) {
 }
 
 // checksumStruct создает контрольную сумму структуры для кеширования
-func checksumStruct[T any]() uint32 {
-	var t T
-	typ := reflect.TypeOf(t)
+func checksumStruct(model interface{}) uint32 {
+	typ := reflect.TypeOf(model)
 	if typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
