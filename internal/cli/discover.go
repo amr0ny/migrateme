@@ -1,5 +1,5 @@
 // internal/commands/discover.go
-package commands
+package cli
 
 import (
 	"fmt"

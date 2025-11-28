@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/amr0ny/migrateme/internal/database"
-	"github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema"
 	"github.com/amr0ny/migrateme/pkg/config"
 	"github.com/amr0ny/migrateme/pkg/migrate"
+	schema2 "github.com/amr0ny/migrateme/pkg/schema"
 	"os"
 	"path/filepath"
 	"sort"
@@ -67,7 +67,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 	}
 
 	// Получаем схемы и строим зависимости
-	schemaFetcher := schema.NewFetcher(m.db.Pool)
+	schemaFetcher := schema2.NewFetcher(m.db.Pool)
 	newSchemas, dependencyGraph, err := m.buildSchemaDependencies(ctx, schemaFetcher)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 	}, nil
 }
 
-func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema.Fetcher) (
+func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2.Fetcher) (
 	map[string]migrate.TableSchema,
 	map[string][]string,
 	error,
@@ -151,13 +151,13 @@ func (m *Migrator) generateMigrationSQL(
 	ctx context.Context,
 	sortedTables []string,
 	newSchemas map[string]migrate.TableSchema,
-	fetcher *schema.Fetcher,
+	fetcher *schema2.Fetcher,
 ) ([]TableChange, []string, []string) {
 	var changes []TableChange
 	var allUpStatements []string
 	var allDownStatements []string
 
-	diffGenerator := schema.NewDiffGenerator()
+	diffGenerator := schema2.NewDiffGenerator()
 
 	for _, table := range sortedTables {
 		newSchema := migrate.NormalizeSchema(newSchemas[table])
@@ -222,12 +222,12 @@ func (m *Migrator) createMigrationFiles(
 	downPath := filepath.Join(m.config.GetMigrationsDir(), baseName+".down.sql")
 
 	// Записываем файлы
-	upContent := schema.WrapTx(upStatements)
+	upContent := schema2.WrapTx(upStatements)
 	if err := os.WriteFile(upPath, []byte(upContent), 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write up migration: %w", err)
 	}
 
-	downContent := schema.WrapTx(downStatements)
+	downContent := schema2.WrapTx(downStatements)
 	if err := os.WriteFile(downPath, []byte(downContent), 0o644); err != nil {
 		os.Remove(upPath) // Cleanup on error
 		return nil, fmt.Errorf("failed to write down migration: %w", err)

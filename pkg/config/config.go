@@ -3,7 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
-	"github.com/amr0ny/migrateme/internal/infrastructure/postgres"
+	"github.com/amr0ny/migrateme/internal/database"
 	"github.com/amr0ny/migrateme/pkg/migrate"
 	"os"
 	"path/filepath"
@@ -16,9 +16,7 @@ import (
 )
 
 type DatabaseConfig struct {
-	DSN            string `yaml:"dsn" env:"DATABASE_DSN"`
-	MaxConnections int    `yaml:"max_connections" env:"DATABASE_MAX_CONNS"`
-	MinConnections int    `yaml:"min_connections" env:"DATABASE_MIN_CONNS"`
+	DSN string `yaml:"dsn" env:"DATABASE_DSN"`
 }
 
 type MigrationsConfig struct {
@@ -82,15 +80,11 @@ func (c *Config) GetMigrationsDir() string {
 }
 
 func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
-	client, err := postgres.NewClient(ctx, postgres.PoolConfig{
-		DSN:      c.GetDSN(),
-		MinConns: int32(c.Database.MinConnections),
-		MaxConns: int32(c.Database.MaxConnections),
-	})
+	db, err := database.NewDB(ctx, c.GetDSN())
 	if err != nil {
 		return nil, err
 	}
-	return client.Pool(), nil
+	return db.Pool, nil
 }
 
 // ==================================================
@@ -99,10 +93,6 @@ func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
 
 func loadConfig(configPath ...string) (*Config, error) {
 	cfg := &Config{
-		Database: DatabaseConfig{
-			MaxConnections: 4,
-			MinConnections: 1,
-		},
 		Migrations: MigrationsConfig{
 			Dir:       "migrations",
 			TableName: "schema_migrations",
@@ -291,7 +281,7 @@ func buildSchemaFromEntity(entity interface{}, tableName string) migrate.TableSc
 	// Импортируем reflect для совместимости
 	imports := map[string]string{
 		"reflect": "reflect",
-		"schema":  "github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema",
+		"schema":  "github.com/amr0ny/migrateme/pkg/schema",
 	}
 	_ = imports // временно для компиляции
 

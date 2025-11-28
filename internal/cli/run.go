@@ -1,4 +1,4 @@
-package commands
+package cli
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewStatusCommand() *cobra.Command {
+func NewRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show applied and pending migrations",
+		Use:   "run",
+		Short: "Apply all pending migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -28,21 +28,12 @@ func NewStatusCommand() *cobra.Command {
 
 			migrator := core.NewMigrator(cfg, db)
 
-			applied, pending, err := migrator.Status(ctx)
+			applied, err := migrator.Run(ctx)
 			if err != nil {
 				return err
 			}
 
-			fmt.Println("Applied:")
-			for _, m := range applied {
-				fmt.Println("  ✔", m)
-			}
-
-			fmt.Println("\nPending:")
-			for _, f := range pending {
-				fmt.Println("  ✘", f)
-			}
-
+			fmt.Printf("Applied %d migrations\n", len(applied))
 			return nil
 		},
 	}

@@ -33,8 +33,8 @@ func GenerateRegistry(outputPath string, entities []EntityInfo) error {
 package {{.PackageName}}
 
 import (
-	"github.com/amr0ny/migrateme/internal/config"
-	"github.com/amr0ny/migrateme/internal/infrastructure/postgres/schema"
+	"github.com/amr0ny/migrateme/pkg/config"
+	"github.com/amr0ny/migrateme/pkg/schema"
 	{{range $alias, $path := .Imports}}
 	{{$alias}} "{{$path}}"{{end}}
 )

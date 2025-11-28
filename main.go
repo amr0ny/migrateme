@@ -1,13 +1,13 @@
 package main
 
 import (
-	"github.com/amr0ny/migrateme/internal/commands"
+	"github.com/amr0ny/migrateme/internal/cli"
 	"log"
 	"os"
 )
 
 func main() {
-	cmd := commands.NewRootCommand()
+	cmd := cli.NewRootCommand()
 
 	if err := cmd.Execute(); err != nil {
 		log.Printf("Error: %v", err)
