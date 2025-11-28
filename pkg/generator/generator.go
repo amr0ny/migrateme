@@ -256,33 +256,6 @@ func isMigratableStruct(structName string, st *ast.StructType, file *ast.File, m
 	return required["TableName"] && required["IsMigratable"]
 }
 
-// hasBaseMigratableEmbedding проверяет встраивание BaseMigratable
-func hasBaseMigratableEmbedding(st *ast.StructType, file *ast.File) bool {
-	imports := getImportsMap(file)
-
-	for _, field := range st.Fields.List {
-		if len(field.Names) == 0 { // Анонимное поле (встраивание)
-			switch t := field.Type.(type) {
-			case *ast.SelectorExpr:
-				if x, ok := t.X.(*ast.Ident); ok {
-					if importPath, exists := imports[x.Name]; exists {
-						if (x.Name == "domain" && t.Sel.Name == "BaseMigratable") ||
-							(strings.HasSuffix(importPath, "/domain") && t.Sel.Name == "BaseMigratable") {
-							return true
-						}
-					}
-				}
-			case *ast.Ident:
-				if t.Name == "BaseMigratable" {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// hasDBTags проверяет наличие db тегов
 func hasDBTags(st *ast.StructType) bool {
 	for _, field := range st.Fields.List {
 		if field.Tag != nil {
