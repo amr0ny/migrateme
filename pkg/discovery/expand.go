@@ -3,6 +3,7 @@ package discovery
 import (
 	"github.com/amr0ny/migrateme/pkg/migrate"
 	"go/ast"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -24,43 +25,66 @@ func ExpandFields(
 			tagText = strings.Trim(field.Tag.Value, "`")
 		}
 
+		// If field has column tag — collect it later
 		column := parseDBTag(tagText)
 
-		// embedded struct?
+		// If field is anonymous (embedded)
+		isEmbedded := len(field.Names) == 0
+
 		switch t := field.Type.(type) {
 
+		// ========== IDENT:   type MyStruct struct { BaseEntity } ==========
 		case *ast.Ident:
-			if next := ctx.Packages[pkgPath].Structs[t.Name]; next != nil {
-				key := pkgPath + "." + t.Name
-				if visited[key] {
-					continue
-				}
-				visited[key] = true
-				out = append(out, ExpandFields(ctx, pkgPath, next, file, visited)...)
-				continue
-			}
-
-		case *ast.SelectorExpr:
-			pkgAlias := t.X.(*ast.Ident).Name
-			importPath := resolveImportPath(file, pkgAlias)
-			if importPath == "" {
-				break
-			}
-
-			if pkg := ctx.Packages[importPath]; pkg != nil {
-				if next := pkg.Structs[t.Sel.Name]; next != nil {
-					key := importPath + "." + t.Sel.Name
+			// anonymous embedded struct
+			if isEmbedded {
+				if next := ctx.Packages[pkgPath].Structs[t.Name]; next != nil {
+					key := pkgPath + "." + t.Name
 					if visited[key] {
-						continue
+						break
 					}
 					visited[key] = true
-					out = append(out, ExpandFields(ctx, importPath, next, file, visited)...)
+					out = append(out,
+						ExpandFields(ctx, pkgPath, next, file, visited)...,
+					)
 					continue
 				}
+			}
+
+		// ========== SELECTOR:   domain.BaseEntity ==========
+		case *ast.SelectorExpr:
+			if isEmbedded {
+				alias := t.X.(*ast.Ident).Name
+				importPath := resolveImportPath(file, alias, ctx.ModulePath, ctx.ModuleRoot)
+				if importPath != "" {
+					if pkg := ctx.Packages[importPath]; pkg != nil {
+						if next := pkg.Structs[t.Sel.Name]; next != nil {
+							key := importPath + "." + t.Sel.Name
+							if visited[key] {
+								break
+							}
+							visited[key] = true
+							out = append(out,
+								ExpandFields(ctx, importPath, next, file, visited)...,
+							)
+							continue
+						}
+					}
+				}
+			}
+
+		// ========== ANONYMOUS STRUCT:   struct { X int; Y string } ==========
+		case *ast.StructType:
+			if isEmbedded {
+				// treat inline anonymous struct as embedded
+				out = append(out,
+					ExpandFields(ctx, pkgPath, t, file, visited)...,
+				)
+				continue
 			}
 		}
 
-		if column != "" && len(field.Names) > 0 {
+		// ========== REGULAR FIELD WITH COLUMN ==========
+		if !isEmbedded && column != "" && len(field.Names) > 0 {
 			out = append(out, migrate.FieldInfo{
 				FieldName:  field.Names[0].Name,
 				ColumnName: column,
@@ -73,22 +97,31 @@ func ExpandFields(
 	return out
 }
 
-func resolveImportPath(file *ast.File, alias string) string {
+func resolveImportPath(file *ast.File, alias string, modulePrefix, moduleRoot string) string {
 	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, "\"")
+		modPath := strings.Trim(imp.Path.Value, "\"")
 
-		// explicit alias
 		if imp.Name != nil && imp.Name.Name == alias {
-			return path
+			return patch(modPath, modulePrefix, moduleRoot)
 		}
 
-		// default alias = last segment
-		parts := strings.Split(path, "/")
+		parts := strings.Split(modPath, "/")
 		if parts[len(parts)-1] == alias {
-			return path
+			return patch(modPath, modulePrefix, moduleRoot)
 		}
 	}
 	return ""
+}
+
+func patch(importPath, modulePrefix, moduleRoot string) string {
+	if !strings.HasPrefix(importPath, modulePrefix) {
+		return importPath
+	}
+
+	rel := strings.TrimPrefix(importPath, modulePrefix)
+	rel = strings.TrimPrefix(rel, "/")
+
+	return filepath.Join(moduleRoot, rel)
 }
 
 func parseDBTag(tag string) string {

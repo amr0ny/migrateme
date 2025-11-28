@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bufio"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -11,24 +12,41 @@ import (
 )
 
 type PackageInfo struct {
-	Path    string                     // package import path
-	Structs map[string]*ast.StructType // all struct definitions in the package
+	Path    string                     // absolute filesystem path
+	Structs map[string]*ast.StructType // struct definitions
 	Files   []*ast.File
 }
 
 type DiscoverContext struct {
-	Packages map[string]*PackageInfo // key = import path
+	Packages   map[string]*PackageInfo
+	ModuleRoot string // absolute path: /Users/.../migrateme
+	ModulePath string // module path:  github.com/amr0ny/migrateme
 }
+
+//
+// MAIN ENTRY
+//
 
 func LoadPackages() (*DiscoverContext, error) {
 	root, err := findModuleRoot()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find module root: %w", err)
 	}
-	ctx := &DiscoverContext{
-		Packages: map[string]*PackageInfo{},
+
+	modulePath, err := readModulePath(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read module path: %w", err)
 	}
 
+	ctx := &DiscoverContext{
+		Packages:   map[string]*PackageInfo{},
+		ModuleRoot: root,
+		ModulePath: modulePath,
+	}
+
+	//
+	// Walk through all *.go files inside module root
+	//
 	err = filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
 		if info.IsDir() {
 			// skip vendor, hidden, build dirs
@@ -38,6 +56,7 @@ func LoadPackages() (*DiscoverContext, error) {
 			return nil
 		}
 
+		// skip test files & non-go files
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
@@ -48,14 +67,24 @@ func LoadPackages() (*DiscoverContext, error) {
 			return nil
 		}
 
-		pkgPath := filepath.Dir(path)
-		pkg := ctx.Packages[pkgPath]
+		absDir := filepath.Dir(path)
+
+		// Create package if not exists
+		pkg := ctx.Packages[absDir]
 		if pkg == nil {
 			pkg = &PackageInfo{
-				Path:    pkgPath,
+				Path:    absDir,
 				Structs: map[string]*ast.StructType{},
 			}
-			ctx.Packages[pkgPath] = pkg
+			ctx.Packages[absDir] = pkg
+
+			// add SECOND key: module import path
+			rel := strings.TrimPrefix(absDir, ctx.ModuleRoot)
+			rel = strings.TrimPrefix(rel, string(filepath.Separator))
+
+			modImportPath := filepath.ToSlash(filepath.Join(ctx.ModulePath, rel))
+
+			ctx.Packages[modImportPath] = pkg
 		}
 
 		pkg.Files = append(pkg.Files, f)
@@ -66,7 +95,9 @@ func LoadPackages() (*DiscoverContext, error) {
 		return nil, err
 	}
 
-	// collect struct types
+	//
+	// Collect struct definitions for each package
+	//
 	for _, pkg := range ctx.Packages {
 		for _, f := range pkg.Files {
 			for _, decl := range f.Decls {
@@ -74,6 +105,7 @@ func LoadPackages() (*DiscoverContext, error) {
 				if !ok || gen.Tok != token.TYPE {
 					continue
 				}
+
 				for _, spec := range gen.Specs {
 					ts, ok := spec.(*ast.TypeSpec)
 					if !ok {
@@ -89,6 +121,10 @@ func LoadPackages() (*DiscoverContext, error) {
 
 	return ctx, nil
 }
+
+//
+// HELPERS
+//
 
 func findModuleRoot() (string, error) {
 	dir, err := os.Getwd()
@@ -107,4 +143,24 @@ func findModuleRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func readModulePath(goModPath string) (string, error) {
+	f, err := os.Open(goModPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		}
+	}
+
+	return "", fmt.Errorf("module path not found in go.mod")
 }
