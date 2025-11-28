@@ -1,8 +1,11 @@
+// internal/cli/generate.go
+
 package cli
 
 import (
 	"context"
 	"fmt"
+
 	"github.com/amr0ny/migrateme/internal/core"
 	"github.com/amr0ny/migrateme/internal/database"
 	"github.com/amr0ny/migrateme/pkg/config"
@@ -27,6 +30,16 @@ func NewGenerateCommand() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
+			// Проверяем, что сущности найдены
+			if len(cfg.Registry) == 0 {
+				if len(cfg.EntityPaths) == 0 {
+					return fmt.Errorf("no entity paths configured. Please set 'entity_paths' in config")
+				}
+				return fmt.Errorf("no migratable entities found in paths: %v", cfg.EntityPaths)
+			}
+
+			fmt.Printf("Found %d entities for migration\n", len(cfg.Registry))
+
 			ctx := context.Background()
 			db, err := database.NewDB(ctx, cfg.GetDSN())
 			if err != nil {
@@ -46,7 +59,7 @@ func NewGenerateCommand() *cobra.Command {
 
 			if dryRun {
 				fmt.Println("DRY RUN - No files were created")
-				fmt.Printf("Detected changes:\n")
+				fmt.Printf("Detected changes in %d tables:\n", len(result.Changes))
 				for _, change := range result.Changes {
 					fmt.Printf("  - %s: %s (%s)\n", change.TableName, change.Type, change.Details)
 				}
@@ -68,6 +81,5 @@ func NewGenerateCommand() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be generated without creating files")
-
 	return cmd
 }

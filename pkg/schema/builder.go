@@ -220,3 +220,57 @@ func stringSlicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// BuildSchemaFromEntity строит схему из структуры (упрощенная версия)
+func BuildSchemaFromEntity(model interface{}, table string) migrate.TableSchema {
+	if model == nil {
+		return migrate.TableSchema{TableName: table}
+	}
+
+	typ := reflect.TypeOf(model)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	schema := migrate.TableSchema{
+		TableName: table,
+		Columns:   []migrate.ColumnMeta{},
+	}
+
+	processStructFields(typ, "", &schema.Columns)
+	return schema
+}
+
+// processStructFields обрабатывает поля структуры
+func processStructFields(t reflect.Type, prefix string, cols *[]migrate.ColumnMeta) {
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Обрабатываем анонимные поля (встраивание)
+		if field.Anonymous {
+			processStructFields(field.Type, prefix, cols)
+			continue
+		}
+
+		tag := field.Tag.Get("db")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		name, attrs := parseTag(tag, field.Type)
+		if name == "" {
+			continue
+		}
+
+		columnName := name
+		if prefix != "" {
+			columnName = prefix + "_" + name
+		}
+
+		*cols = append(*cols, migrate.ColumnMeta{
+			FieldName:  field.Name,
+			ColumnName: columnName,
+			Attrs:      attrs,
+		})
+	}
+}

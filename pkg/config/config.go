@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/amr0ny/migrateme/internal/database"
+	"github.com/amr0ny/migrateme/pkg/discovery"
 	"github.com/amr0ny/migrateme/pkg/migrate"
+	"github.com/amr0ny/migrateme/pkg/schema"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,17 +31,6 @@ type LoggingConfig struct {
 	Format string `yaml:"format" env:"LOG_FORMAT"`
 }
 
-type Config struct {
-	Database   DatabaseConfig   `yaml:"database"`
-	Migrations MigrationsConfig `yaml:"migrations"`
-	Logging    LoggingConfig    `yaml:"logging"`
-
-	AutoRegister bool     `yaml:"auto_register"`
-	EntityPaths  []string `yaml:"entity_paths"`
-
-	Registry migrate.SchemaRegistry `yaml:"-"`
-}
-
 var (
 	once      sync.Once
 	config    *Config
@@ -50,23 +41,7 @@ var (
 // PUBLIC API
 // ==================================================
 
-func Load(configPath ...string) (*Config, error) {
-	once.Do(func() {
-		cfg, err := loadConfig(configPath...)
-		if err != nil {
-			configErr = err
-			return
-		}
-		config = cfg
-	})
-	return config, configErr
-}
-
 // GetConfig возвращает конфиг для использования в сгенерированном коде
-func GetConfig() *Config {
-	config, _ := Load()
-	return config
-}
 
 func (c *Config) GetDSN() string {
 	if env := os.Getenv("DATABASE_DSN"); env != "" {
@@ -101,7 +76,6 @@ func loadConfig(configPath ...string) (*Config, error) {
 			Level:  "info",
 			Format: "text",
 		},
-		AutoRegister: false,
 	}
 
 	path := getConfigPath(configPath...)
@@ -110,10 +84,6 @@ func loadConfig(configPath ...string) (*Config, error) {
 	}
 
 	loadEnvConfig(cfg)
-
-	if err := initRegistry(cfg); err != nil {
-		return nil, fmt.Errorf("failed to init registry: %w", err)
-	}
 
 	return cfg, nil
 }
@@ -170,19 +140,9 @@ func loadEnvConfig(cfg *Config) {
 // ==================================================
 // REGISTRY + AUTO DISCOVERY
 // ==================================================
-
-func initRegistry(cfg *Config) error {
-	cfg.Registry = make(migrate.SchemaRegistry)
-
-	// Авторегистрация через кодогенерацию отключена в runtime
-	// Вместо этого используется сгенерированный код в internal/migrator
-	if cfg.AutoRegister {
-		fmt.Println("⚠️  Auto-registration is disabled when using code generation.")
-		fmt.Println("   Use 'migrateme discover' to generate registry code instead.")
-	}
-
-	return nil
-}
+// ==================================================
+// REGISTRY + AUTO DISCOVERY
+// ==================================================
 
 // ==================================================
 // PATH RESOLUTION WITH GLOBS
@@ -290,4 +250,66 @@ func buildSchemaFromEntity(entity interface{}, tableName string) migrate.TableSc
 		TableName: tableName,
 		Columns:   []migrate.ColumnMeta{},
 	}
+}
+
+// pkg/config/config.go
+
+type Config struct {
+	Database   DatabaseConfig   `yaml:"database"`
+	Migrations MigrationsConfig `yaml:"migrations"`
+	Logging    LoggingConfig    `yaml:"logging"`
+
+	EntityPaths []string `yaml:"entity_paths"`
+
+	// Runtime registry - заполняется при загрузке
+	Registry migrate.SchemaRegistry `yaml:"-"`
+}
+
+// Load теперь также инициализирует registry
+func Load(configPath ...string) (*Config, error) {
+	once.Do(func() {
+		cfg, err := loadConfig(configPath...)
+		if err != nil {
+			configErr = err
+			return
+		}
+
+		// Инициализируем registry при загрузке конфига
+		if err := initRuntimeRegistry(cfg); err != nil {
+			configErr = fmt.Errorf("failed to init runtime registry: %w", err)
+			return
+		}
+
+		config = cfg
+	})
+	return config, configErr
+}
+
+// initRuntimeRegistry находит и регистрирует сущности в runtime
+func initRuntimeRegistry(cfg *Config) error {
+	if len(cfg.EntityPaths) == 0 {
+		return nil
+	}
+
+	paths, err := ResolveEntityPaths(cfg.EntityPaths)
+	if err != nil {
+		return fmt.Errorf("failed to resolve entity paths: %w", err)
+	}
+
+	// Обнаруживаем сущности
+	entities, err := discovery.DiscoverEntities(paths)
+	if err != nil {
+		return fmt.Errorf("failed to discover entities: %w", err)
+	}
+
+	// Создаем registry
+	cfg.Registry = make(migrate.SchemaRegistry)
+	for _, entity := range entities {
+		entity := entity // capture range variable
+		cfg.Registry[entity.TableName] = func(table string) migrate.TableSchema {
+			return schema.BuildSchemaFromEntity(entity.TypeInfo, table)
+		}
+	}
+
+	return nil
 }
