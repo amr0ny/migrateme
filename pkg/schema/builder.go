@@ -13,7 +13,7 @@ import (
 var columnCache sync.Map
 
 // BuildSchema строит схему таблицы на основе структуры
-func BuildSchema[T migrate.Migratable](table string) migrate.TableSchema {
+func BuildSchema[T any](table string) migrate.TableSchema {
 	var t T
 	typ := reflect.TypeOf(t)
 	if typ.Kind() == reflect.Ptr {
