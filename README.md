@@ -30,9 +30,10 @@ cd migrateme && go build -o migrateme ./cmd/migrateme
 
 ## ⚡ Quick Start
 
-1. **Define your entities**:
+### 1. Define Your Entities
+
 ```go
-package main
+package domain
 
 import "github.com/amr0ny/migrateme/internal/domain"
 
@@ -51,7 +52,10 @@ type Post struct {
 }
 ```
 
-2. **Create config** (`migrateme.yaml`):
+### 2. Create Configuration
+
+Create `migrateme.yaml`:
+
 ```yaml
 database:
   dsn: "postgres://user:pass@localhost:5432/mydb"
@@ -65,7 +69,8 @@ entity_paths:
   - "internal/models/*.go"
 ```
 
-3. **Run migrations**:
+### 3. Run Migrations
+
 ```bash
 # Discover your entities
 migrateme discover
@@ -97,6 +102,7 @@ migrateme rollback 1
 ## 🔧 Configuration
 
 ### YAML Configuration
+
 ```yaml
 database:
   dsn: "postgres://user:pass@localhost:5432/dbname"
@@ -118,6 +124,7 @@ entity_paths:
 ```
 
 ### Environment Variables
+
 - `DATABASE_DSN` - Database connection string
 - `MIGRATIONS_DIR` - Migrations directory (default: "migrations")
 - `LOG_LEVEL` - Log level (default: "info")
@@ -125,18 +132,21 @@ entity_paths:
 ## 🎯 Advanced Usage
 
 ### Custom Migration Names
+
 ```bash
 migrateme generate "add_user_profile"
 # Creates: 20240115120000__add_user_profile__a1b2c3.up.sql
 ```
 
 ### Dry-run Mode
+
 ```bash
 migrateme generate --dry-run
 # Shows what would be created without writing files
 ```
 
 ### Complex Entity Relationships
+
 ```go
 type User struct {
     domain.BaseMigratable
@@ -154,6 +164,7 @@ type Profile struct {
 ```
 
 ### Manual Schema Registration
+
 ```go
 import "github.com/amr0ny/migrateme/internal/config"
 
@@ -180,9 +191,29 @@ cfg.RegisterEntity("custom_table", func(table string) schema.TableSchema {
 })
 ```
 
+## 🏗 Project Structure
+
+```
+migrateme/
+├── cmd/migrateme/
+│   └── main.go                 # CLI entry point
+├── internal/
+│   ├── commands/               # CLI command implementations
+│   ├── config/                 # Configuration management
+│   ├── core/                   # Core migration logic
+│   ├── database/               # Database connection handling
+│   ├── domain/                 # Domain models and interfaces
+│   ├── generator/              # Code generation utilities
+│   └── infrastructure/
+│       └── postgres/
+│           └── schema/         # PostgreSQL schema management
+├── migrations/                 # Generated migration files
+└── migrateme.yaml             # Configuration file
+```
+
 ## 🔍 How It Works
 
-1. **Discovery Phase** - Scans your code for structs with `BaseMigratable`
+1. **Discovery Phase** - Scans your code for structs with `BaseMigratable` or `db` tags
 2. **Schema Analysis** - Compares current DB schema with code definitions
 3. **Dependency Graph** - Builds dependency graph for foreign keys
 4. **Topological Sort** - Orders migrations to satisfy dependencies
@@ -197,9 +228,14 @@ cfg.RegisterEntity("custom_table", func(table string) schema.TableSchema {
 - **Constraint Handling** - Smart handling of NOT NULL constraints
 - **Dry-run Mode** - Preview changes before execution
 
+## 📋 Requirements
+
+- Go 1.24 or later
+- PostgreSQL 12 or later
+
 ## 🤝 Contributing
 
-We love contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
 1. Fork the repository
 2. Create a feature branch
