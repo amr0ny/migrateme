@@ -17,9 +17,12 @@ func topologicalSort(graph map[string][]string, allTables []string) ([]string, e
 		inDegree[table] = 0
 	}
 
-	for _, dependents := range graph {
-		for _, dep := range dependents {
-			inDegree[dep]++
+	// Увеличиваем степень входа для зависимостей, исключая self-reference
+	for from, dependents := range graph {
+		for _, to := range dependents {
+			if from != to { // Игнорируем self-reference
+				inDegree[to]++
+			}
 		}
 	}
 
@@ -37,15 +40,17 @@ func topologicalSort(graph map[string][]string, allTables []string) ([]string, e
 		result = append(result, current)
 
 		for _, neighbor := range graph[current] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
+			if current != neighbor { // Игнорируем self-reference
+				inDegree[neighbor]--
+				if inDegree[neighbor] == 0 {
+					queue = append(queue, neighbor)
+				}
 			}
 		}
 	}
 
 	if len(result) != len(allTables) {
-		// Находим таблицы, которые остались в цикле
+		// Проверяем, связана ли проблема с self-reference
 		remainingTables := make([]string, 0)
 		for _, table := range allTables {
 			found := false
@@ -60,29 +65,41 @@ func topologicalSort(graph map[string][]string, allTables []string) ([]string, e
 			}
 		}
 
-		cycleInfo := "\nCyclic dependency detected in foreign keys. Problematic tables and their dependencies:\n"
+		// Отладочная информация о циклах
+		cycleInfo := "\nDependency resolution failed. Problematic tables:\n"
+		cycleInfo += "\nDetailed analysis:\n"
 		for _, table := range remainingTables {
 			deps := graph[table]
-			if len(deps) > 0 {
-				cycleInfo += fmt.Sprintf("  - %s depends on: %v\n", table, deps)
-			} else {
-				cycleInfo += fmt.Sprintf("  - %s (isolated table with cyclic reference)\n", table)
+			selfRef := hasSelfReference(graph, table)
+			nonSelfCount := countNonSelfReferences(graph, table)
+
+			cycleInfo += fmt.Sprintf("  - %s: self-reference=%v, external-deps=%d, all-deps=%v\n",
+				table, selfRef, nonSelfCount, deps)
+		}
+
+		// Пытаемся добавить оставшиеся таблицы (те, у которых только self-reference)
+		for _, table := range remainingTables {
+			deps := graph[table]
+			onlySelfRef := true
+			for _, dep := range deps {
+				if dep != table {
+					onlySelfRef = false
+					break
+				}
+			}
+			if onlySelfRef && len(deps) > 0 {
+				result = append(result, table)
 			}
 		}
 
-		cycleInfo += "\nFull dependency graph:\n"
-		for table, deps := range graph {
-			if len(deps) > 0 {
-				cycleInfo += fmt.Sprintf("  - %s -> %v\n", table, deps)
-			}
+		// Если после этого все еще есть проблемы
+		if len(result) != len(allTables) {
+			return nil, fmt.Errorf(cycleInfo)
 		}
-
-		return nil, fmt.Errorf(cycleInfo)
 	}
 
 	return result, nil
 }
-
 func randomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
@@ -238,4 +255,26 @@ func extractMigrationBases(upFiles []string) []string {
 		bases = append(bases, base)
 	}
 	return bases
+}
+
+// internal/core/utils.go
+func hasSelfReference(graph map[string][]string, table string) bool {
+	deps := graph[table]
+	for _, dep := range deps {
+		if dep == table {
+			return true
+		}
+	}
+	return false
+}
+
+func countNonSelfReferences(graph map[string][]string, table string) int {
+	count := 0
+	deps := graph[table]
+	for _, dep := range deps {
+		if dep != table {
+			count++
+		}
+	}
+	return count
 }

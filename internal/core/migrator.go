@@ -100,7 +100,6 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		Changes:      changes,
 	}, nil
 }
-
 func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2.Fetcher) (
 	map[string]migrate.TableSchema,
 	map[string][]string,
@@ -111,6 +110,7 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 
 	for table, builder := range m.config.Registry {
 		newSchemas[table] = builder(table)
+		dependencyGraph[table] = []string{} // Инициализируем для всех таблиц
 	}
 
 	allTables := getTableNames(newSchemas)
@@ -130,6 +130,7 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 			if column.Attrs.ForeignKey != nil {
 				refTable := column.Attrs.ForeignKey.Table
 				if _, exists := m.config.Registry[refTable]; exists {
+					// Добавляем зависимость, даже если это self-reference
 					dependencyGraph[refTable] = append(dependencyGraph[refTable], table)
 				}
 			}
