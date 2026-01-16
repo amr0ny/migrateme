@@ -49,7 +49,43 @@ func (c *Config) GetDSN() string {
 }
 
 func (c *Config) GetMigrationsDir() string {
+	if env := os.Getenv("MIGRATIONS_DIR"); env != "" {
+		return env
+	}
 	return c.Migrations.Dir
+}
+
+func (c *Config) GetMigrationsTable() string {
+	if env := os.Getenv("MIGRATIONS_TABLE"); env != "" {
+		return env
+	}
+	return c.Migrations.TableName
+}
+
+func (c *Config) GetLogLevel() string {
+	if env := os.Getenv("LOG_LEVEL"); env != "" {
+		return env
+	}
+	return c.Logging.Level
+}
+
+func (c *Config) GetLogFormat() string {
+	if env := os.Getenv("LOG_FORMAT"); env != "" {
+		return env
+	}
+	return c.Logging.Format
+}
+
+func (c *Config) GetEntityPaths() []string {
+	if env := os.Getenv("ENTITY_PATHS"); env != "" {
+		// Используем запятую как разделитель по умолчанию
+		separator := ","
+		if envSeparator := os.Getenv("ENTITY_PATHS_SEPARATOR"); envSeparator != "" {
+			separator = envSeparator
+		}
+		return strings.Split(env, separator)
+	}
+	return c.EntityPaths
 }
 
 func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
@@ -124,14 +160,34 @@ func loadYAMLConfig(path string, cfg *Config) error {
 }
 
 func loadEnvConfig(cfg *Config) {
+	// Database config
 	if v := os.Getenv("DATABASE_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}
+
+	// Migrations config
 	if v := os.Getenv("MIGRATIONS_DIR"); v != "" {
 		cfg.Migrations.Dir = v
 	}
+	if v := os.Getenv("MIGRATIONS_TABLE"); v != "" {
+		cfg.Migrations.TableName = v
+	}
+
+	// Logging config
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
+	}
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		cfg.Logging.Format = v
+	}
+
+	// Entity paths
+	if v := os.Getenv("ENTITY_PATHS"); v != "" {
+		separator := ","
+		if envSeparator := os.Getenv("ENTITY_PATHS_SEPARATOR"); envSeparator != "" {
+			separator = envSeparator
+		}
+		cfg.EntityPaths = strings.Split(v, separator)
 	}
 }
 
@@ -212,7 +268,7 @@ type Config struct {
 	Migrations MigrationsConfig `yaml:"migrations"`
 	Logging    LoggingConfig    `yaml:"logging"`
 
-	EntityPaths []string `yaml:"entity_paths"`
+	EntityPaths []string `yaml:"entity_paths" env:"ENTITY_PATHS" envSeparator:","`
 
 	Registry migrate.SchemaRegistry `yaml:"-"`
 }
@@ -236,11 +292,12 @@ func Load(configPath ...string) (*Config, error) {
 }
 
 func initRuntimeRegistry(cfg *Config) error {
-	if len(cfg.EntityPaths) == 0 {
+	entityPaths := cfg.GetEntityPaths()
+	if len(entityPaths) == 0 {
 		return nil
 	}
 
-	paths, err := ResolveEntityPaths(cfg.EntityPaths)
+	paths, err := ResolveEntityPaths(entityPaths)
 	if err != nil {
 		return fmt.Errorf("failed to resolve entity paths: %w", err)
 	}
