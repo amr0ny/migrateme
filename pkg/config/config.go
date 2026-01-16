@@ -88,6 +88,10 @@ func (c *Config) GetEntityPaths() []string {
 	return c.EntityPaths
 }
 
+func (c *Config) HasEntityPaths() bool {
+	return len(c.GetEntityPaths()) > 0
+}
+
 func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
 	db, err := database.NewDB(ctx, c.GetDSN())
 	if err != nil {
@@ -281,9 +285,15 @@ func Load(configPath ...string) (*Config, error) {
 			return
 		}
 
-		if err := initRuntimeRegistry(cfg); err != nil {
-			configErr = fmt.Errorf("failed to init runtime registry: %w", err)
-			return
+		// Инициализация реестра схем (опционально, только если есть entity_paths)
+		if cfg.HasEntityPaths() {
+			if err := initRuntimeRegistry(cfg); err != nil {
+				configErr = fmt.Errorf("failed to init runtime registry: %w", err)
+				return
+			}
+		} else {
+			// Создаем пустой реестр, если нет entity_paths
+			cfg.Registry = make(migrate.SchemaRegistry)
 		}
 
 		config = cfg
@@ -291,9 +301,19 @@ func Load(configPath ...string) (*Config, error) {
 	return config, configErr
 }
 
+func MustLoad(configPath ...string) *Config {
+	cfg, err := Load(configPath...)
+	if err != nil {
+		panic(fmt.Sprintf("failed to load config: %v", err))
+	}
+	return cfg
+}
+
 func initRuntimeRegistry(cfg *Config) error {
 	entityPaths := cfg.GetEntityPaths()
 	if len(entityPaths) == 0 {
+		// Нет путей к сущностям - это нормально, просто создаем пустой реестр
+		cfg.Registry = make(migrate.SchemaRegistry)
 		return nil
 	}
 
