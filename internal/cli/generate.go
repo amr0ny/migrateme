@@ -53,6 +53,12 @@ func NewGenerateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(result.Warnings) > 0 {
+				fmt.Println("SQLite compatibility notes:")
+				for _, w := range result.Warnings {
+					fmt.Printf("  - %s\n", w)
+				}
+			}
 
 			if dryRun {
 				fmt.Println("DRY RUN - No files were created")

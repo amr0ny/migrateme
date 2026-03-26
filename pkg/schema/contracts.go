@@ -13,3 +13,16 @@ type TableFetcher interface {
 type SchemaDiffer interface {
 	DiffSchemas(old, new migrate.TableSchema) migrate.TableDiff
 }
+
+type Severity string
+
+const (
+	SeverityInfo    Severity = "info"
+	SeverityWarning Severity = "warning"
+)
+
+type Diagnostic struct {
+	Severity Severity
+	Table    string
+	Message  string
+}

@@ -14,3 +14,19 @@ func WrapTx(statements []string) string {
 	content += "\nCOMMIT;"
 	return content
 }
+
+func WrapTxForDialect(dialect string, statements []string) string {
+	if dialect == "sqlite" {
+		if len(statements) == 0 {
+			return ""
+		}
+		content := ""
+		for _, stmt := range statements {
+			if stmt != "" {
+				content += stmt + ";\n"
+			}
+		}
+		return content
+	}
+	return WrapTx(statements)
+}

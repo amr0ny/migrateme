@@ -14,6 +14,28 @@ func NewSQLiteDiffGenerator() *SQLiteDiffGenerator {
 	return &SQLiteDiffGenerator{}
 }
 
+type SQLitePlanner struct {
+	diagnostics []Diagnostic
+}
+
+func NewSQLitePlanner() *SQLitePlanner {
+	return &SQLitePlanner{diagnostics: make([]Diagnostic, 0)}
+}
+
+func (p *SQLitePlanner) Diagnostics() []Diagnostic {
+	out := make([]Diagnostic, len(p.diagnostics))
+	copy(out, p.diagnostics)
+	return out
+}
+
+func (p *SQLitePlanner) addWarning(table, msg string) {
+	p.diagnostics = append(p.diagnostics, Diagnostic{
+		Severity: SeverityWarning,
+		Table:    table,
+		Message:  msg,
+	})
+}
+
 func (g *SQLiteDiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableDiff {
 	if len(old.Columns) == 0 && len(new.Columns) > 0 {
 		return g.generateCreateTableDiff(new)
@@ -35,6 +57,23 @@ func (g *SQLiteDiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.
 
 	g.handleSQLiteIndexChanges(&diff, old, new)
 	return diff
+}
+
+func (p *SQLitePlanner) DiffSchemas(old, new migrate.TableSchema) migrate.TableDiff {
+	p.diagnostics = p.diagnostics[:0]
+	if len(old.Columns) == 0 && len(new.Columns) > 0 {
+		return NewSQLiteDiffGenerator().DiffSchemas(old, new)
+	}
+
+	needsRebuild, reasons := sqliteNeedsRebuild(old, new)
+	for _, reason := range reasons {
+		p.addWarning(new.TableName, reason)
+	}
+	if needsRebuild {
+		p.addWarning(new.TableName, "[rebuild] automatic SQLite table rebuild will be used for schema changes")
+		return p.rebuildTableDiff(old, new)
+	}
+	return NewSQLiteDiffGenerator().DiffSchemas(old, new)
 }
 
 func (g *SQLiteDiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate.TableDiff {
@@ -167,9 +206,53 @@ func normalizeSQLiteType(t string) string {
 	return t
 }
 
-func ValidateSQLiteDiffSupport(old, new migrate.TableSchema) error {
+func ValidateSQLiteCapabilities(new migrate.TableSchema) []Diagnostic {
+	diags := make([]Diagnostic, 0)
+	for _, col := range new.Columns {
+		pt := strings.ToLower(strings.TrimSpace(col.Attrs.PgType))
+		switch {
+		case strings.Contains(pt, "jsonb"):
+			diags = append(diags, Diagnostic{
+				Severity: SeverityWarning,
+				Table:    new.TableName,
+				Message:  fmt.Sprintf("[mapped] column %s: jsonb mapped to TEXT in sqlite", col.ColumnName),
+			})
+		case strings.Contains(pt, "uuid"):
+			diags = append(diags, Diagnostic{
+				Severity: SeverityWarning,
+				Table:    new.TableName,
+				Message:  fmt.Sprintf("[mapped] column %s: uuid mapped to TEXT in sqlite", col.ColumnName),
+			})
+		case strings.Contains(pt, "timestamptz") || strings.Contains(pt, "timestamp with time zone"):
+			diags = append(diags, Diagnostic{
+				Severity: SeverityWarning,
+				Table:    new.TableName,
+				Message:  fmt.Sprintf("[mapped] column %s: timestamptz mapped to TEXT in sqlite", col.ColumnName),
+			})
+		case pt == "boolean":
+			diags = append(diags, Diagnostic{
+				Severity: SeverityWarning,
+				Table:    new.TableName,
+				Message:  fmt.Sprintf("[mapped] column %s: boolean mapped to INTEGER in sqlite", col.ColumnName),
+			})
+		}
+	}
+	for _, idx := range new.Indexes {
+		if idx.Where != nil && strings.TrimSpace(*idx.Where) != "" {
+			diags = append(diags, Diagnostic{
+				Severity: SeverityInfo,
+				Table:    new.TableName,
+				Message:  fmt.Sprintf("[direct] partial index %s will be generated for sqlite as declared", idx.Name),
+			})
+		}
+	}
+	return diags
+}
+
+func sqliteNeedsRebuild(old, new migrate.TableSchema) (bool, []string) {
+	reasons := make([]string, 0)
 	if len(old.Columns) == 0 {
-		return nil
+		return false, reasons
 	}
 	oldCols := makeColumnMap(old.Columns)
 	newCols := makeColumnMap(new.Columns)
@@ -177,10 +260,11 @@ func ValidateSQLiteDiffSupport(old, new migrate.TableSchema) error {
 	for _, oldCol := range old.Columns {
 		newCol, exists := newCols[oldCol.ColumnName]
 		if !exists {
-			return fmt.Errorf("sqlite dialect does not support dropping columns (%s.%s)", new.TableName, oldCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("column drop detected (%s.%s)", new.TableName, oldCol.ColumnName))
+			continue
 		}
 		if oldCol.Attrs.PgType != newCol.Attrs.PgType {
-			return fmt.Errorf("sqlite dialect does not support altering column type (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("column type change detected (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 		oldDef, newDef := "", ""
 		if oldCol.Attrs.Default != nil {
@@ -190,16 +274,16 @@ func ValidateSQLiteDiffSupport(old, new migrate.TableSchema) error {
 			newDef = strings.TrimSpace(*newCol.Attrs.Default)
 		}
 		if oldDef != newDef {
-			return fmt.Errorf("sqlite dialect does not support altering column default (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("column default change detected (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 		if oldCol.Attrs.NotNull != newCol.Attrs.NotNull {
-			return fmt.Errorf("sqlite dialect does not support altering NOT NULL (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("NOT NULL change detected (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 		if oldCol.Attrs.Unique != newCol.Attrs.Unique || oldCol.Attrs.IsPK != newCol.Attrs.IsPK {
-			return fmt.Errorf("sqlite dialect does not support altering PK/UNIQUE constraints (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("PK/UNIQUE change detected (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 		if !foreignKeysEqual(oldCol.Attrs.ForeignKey, newCol.Attrs.ForeignKey) {
-			return fmt.Errorf("sqlite dialect does not support altering foreign keys (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("foreign key change detected (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 	}
 
@@ -208,7 +292,7 @@ func ValidateSQLiteDiffSupport(old, new migrate.TableSchema) error {
 			continue
 		}
 		if newCol.Attrs.ForeignKey != nil {
-			return fmt.Errorf("sqlite dialect does not support adding foreign key on existing table via ADD COLUMN (%s.%s)", new.TableName, newCol.ColumnName)
+			reasons = append(reasons, fmt.Sprintf("new column with foreign key requires rebuild (%s.%s)", new.TableName, newCol.ColumnName))
 		}
 	}
 
@@ -221,13 +305,70 @@ func ValidateSQLiteDiffSupport(old, new migrate.TableSchema) error {
 		newChecks[checkKey(chk)] = struct{}{}
 	}
 	if len(oldChecks) != len(newChecks) {
-		return fmt.Errorf("sqlite dialect does not support altering CHECK constraints on existing tables (%s)", new.TableName)
+		reasons = append(reasons, fmt.Sprintf("CHECK constraints changed (%s)", new.TableName))
 	}
 	for k := range oldChecks {
 		if _, ok := newChecks[k]; !ok {
-			return fmt.Errorf("sqlite dialect does not support altering CHECK constraints on existing tables (%s)", new.TableName)
+			reasons = append(reasons, fmt.Sprintf("CHECK constraints changed (%s)", new.TableName))
+			break
 		}
 	}
 
-	return nil
+	return len(reasons) > 0, reasons
+}
+
+func (p *SQLitePlanner) rebuildTableDiff(old, new migrate.TableSchema) migrate.TableDiff {
+	tmpTable := "__migrateme_tmp_" + new.TableName
+	tmpSchema := new
+	tmpSchema.TableName = tmpTable
+	createTmp := NewSQLiteDiffGenerator().generateCreateTableDiff(tmpSchema).Up
+
+	oldCols := makeColumnMap(old.Columns)
+	insertCols := make([]string, 0)
+	selectExpr := make([]string, 0)
+	for _, col := range new.Columns {
+		insertCols = append(insertCols, quoteSQLiteIdent(col.ColumnName))
+		if oldCol, exists := oldCols[col.ColumnName]; exists {
+			if strings.TrimSpace(oldCol.Attrs.PgType) != strings.TrimSpace(col.Attrs.PgType) {
+				selectExpr = append(selectExpr, fmt.Sprintf("CAST(%s AS %s)", quoteSQLiteIdent(col.ColumnName), normalizeSQLiteType(col.Attrs.PgType)))
+			} else {
+				selectExpr = append(selectExpr, quoteSQLiteIdent(col.ColumnName))
+			}
+			continue
+		}
+		if col.Attrs.Default != nil {
+			selectExpr = append(selectExpr, *col.Attrs.Default)
+		} else {
+			selectExpr = append(selectExpr, "NULL")
+		}
+	}
+
+	up := make([]string, 0, len(createTmp)+5)
+	up = append(up, createTmp...)
+	up = append(up, fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s",
+		quoteSQLiteIdent(tmpTable),
+		strings.Join(insertCols, ", "),
+		strings.Join(selectExpr, ", "),
+		quoteSQLiteIdent(old.TableName),
+	))
+	up = append(up, fmt.Sprintf("DROP TABLE IF EXISTS %s", quoteSQLiteIdent(old.TableName)))
+	up = append(up, fmt.Sprintf("ALTER TABLE %s RENAME TO %s", quoteSQLiteIdent(tmpTable), quoteSQLiteIdent(new.TableName)))
+
+	newIndexes := append([]migrate.IndexMeta(nil), new.Indexes...)
+	sort.Slice(newIndexes, func(i, j int) bool { return newIndexes[i].Name < newIndexes[j].Name })
+	g := NewSQLiteDiffGenerator()
+	for _, idx := range newIndexes {
+		name := idx.Name
+		if strings.TrimSpace(name) == "" {
+			name = defaultIndexName(new.TableName, idx.Columns)
+		}
+		up = append(up, g.sqliteCreateIndexStatement(new.TableName, name, idx.Columns, idx.Unique, idx.Where))
+	}
+
+	return migrate.TableDiff{
+		Up: up,
+		Down: []string{
+			fmt.Sprintf("-- SQLite auto-rebuild rollback for table %s is not generated automatically", quoteSQLiteIdent(new.TableName)),
+		},
+	}
 }

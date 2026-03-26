@@ -34,6 +34,7 @@ type GenerateOptions struct {
 type GenerateResult struct {
 	CreatedFiles []string
 	Changes      []TableChange
+	Warnings     []string
 }
 
 type TableChange struct {
@@ -78,7 +79,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return nil, fmt.Errorf("failed to sort tables topologically: %w", err)
 	}
 
-	changes, upStatements, downStatements, err := m.generateMigrationSQL(sortedTables, newSchemas, oldSchemas)
+	changes, upStatements, downStatements, warnings, err := m.generateMigrationSQL(sortedTables, newSchemas, oldSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +87,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return &GenerateResult{
 			CreatedFiles: []string{},
 			Changes:      changes,
+			Warnings:     warnings,
 		}, nil
 	}
 
@@ -93,6 +95,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return &GenerateResult{
 			CreatedFiles: []string{},
 			Changes:      changes,
+			Warnings:     warnings,
 		}, nil
 	}
 
@@ -104,6 +107,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 	return &GenerateResult{
 		CreatedFiles: createdFiles,
 		Changes:      changes,
+		Warnings:     warnings,
 	}, nil
 }
 func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher schema2.TableFetcher) (
@@ -150,14 +154,17 @@ func (m *Migrator) generateMigrationSQL(
 	sortedTables []string,
 	newSchemas map[string]migrate.TableSchema,
 	oldSchemas map[string]migrate.TableSchema,
-) ([]TableChange, []string, []string, error) {
+) ([]TableChange, []string, []string, []string, error) {
 	var changes []TableChange
 	var allUpStatements []string
 	var allDownStatements []string
+	var warnings []string
 
 	var diffGenerator schema2.SchemaDiffer
+	var sqlitePlanner *schema2.SQLitePlanner
 	if m.db.Dialect == database.DialectSQLite {
-		diffGenerator = schema2.NewSQLiteDiffGenerator()
+		sqlitePlanner = schema2.NewSQLitePlanner()
+		diffGenerator = sqlitePlanner
 	} else {
 		diffGenerator = schema2.NewDiffGenerator()
 	}
@@ -166,12 +173,17 @@ func (m *Migrator) generateMigrationSQL(
 		newSchema := migrate.NormalizeSchema(newSchemas[table])
 		oldSchema := migrate.NormalizeSchema(oldSchemas[table])
 		if m.db.Dialect == database.DialectSQLite {
-			if err := schema2.ValidateSQLiteDiffSupport(oldSchema, newSchema); err != nil {
-				return nil, nil, nil, fmt.Errorf("sqlite unsupported schema change for table %s: %w", table, err)
+			for _, d := range schema2.ValidateSQLiteCapabilities(newSchema) {
+				warnings = append(warnings, fmt.Sprintf("%s: %s", d.Table, d.Message))
 			}
 		}
 
 		diff := diffGenerator.DiffSchemas(oldSchema, newSchema)
+		if sqlitePlanner != nil {
+			for _, d := range sqlitePlanner.Diagnostics() {
+				warnings = append(warnings, fmt.Sprintf("%s: %s", d.Table, d.Message))
+			}
+		}
 		if diff.IsEmpty() {
 			continue
 		}
@@ -192,7 +204,25 @@ func (m *Migrator) generateMigrationSQL(
 		allDownStatements = append(tableDown, allDownStatements...)
 	}
 
-	return changes, allUpStatements, allDownStatements, nil
+	return changes, allUpStatements, allDownStatements, dedupeWarnings(warnings), nil
+}
+
+func dedupeWarnings(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, w := range in {
+		key := strings.TrimSpace(w)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (m *Migrator) newSchemaFetcher() (schema2.TableFetcher, error) {
@@ -252,12 +282,12 @@ func (m *Migrator) createMigrationFiles(
 	downPath := filepath.Join(m.config.GetMigrationsDir(), baseName+".down.sql")
 
 	// Записываем файлы
-	upContent := schema2.WrapTx(upStatements)
+	upContent := schema2.WrapTxForDialect(string(m.db.Dialect), upStatements)
 	if err := os.WriteFile(upPath, []byte(upContent), 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write up migration: %w", err)
 	}
 
-	downContent := schema2.WrapTx(downStatements)
+	downContent := schema2.WrapTxForDialect(string(m.db.Dialect), downStatements)
 	if err := os.WriteFile(downPath, []byte(downContent), 0o644); err != nil {
 		os.Remove(upPath) // Cleanup on error
 		return nil, fmt.Errorf("failed to write down migration: %w", err)
