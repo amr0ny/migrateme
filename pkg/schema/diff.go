@@ -3,6 +3,7 @@ package schema
 import (
 	"fmt"
 	"github.com/amr0ny/migrateme/pkg/migrate"
+	"sort"
 	"strings"
 )
 
@@ -26,7 +27,8 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 		return g.generateCreateTableDiff(new)
 	}
 
-	for name, newCol := range newCols {
+	for _, name := range sortedColumnNames(newCols) {
+		newCol := newCols[name]
 		oldCol, exists := oldCols[name]
 		if !exists {
 			g.handleAddedColumn(&mig, new.TableName, newCol, pushUp, pushDownFront)
@@ -35,7 +37,8 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 		g.handleChangedColumn(&mig, new.TableName, oldCol, newCol, pushUp, pushDownFront)
 	}
 
-	for name, oldCol := range oldCols {
+	for _, name := range sortedColumnNames(oldCols) {
+		oldCol := oldCols[name]
 		if _, exists := newCols[name]; !exists {
 			g.handleRemovedColumn(&mig, old.TableName, oldCol, pushUp, pushDownFront)
 		}
@@ -134,7 +137,8 @@ func (g *DiffGenerator) handleCheckChanges(
 	}
 
 	// Added checks.
-	for key, newChk := range newByKey {
+	for _, key := range sortedCheckKeys(newByKey) {
+		newChk := newByKey[key]
 		if _, exists := oldByKey[key]; exists {
 			continue
 		}
@@ -149,7 +153,8 @@ func (g *DiffGenerator) handleCheckChanges(
 	}
 
 	// Removed checks.
-	for key, oldChk := range oldByKey {
+	for _, key := range sortedCheckKeys(oldByKey) {
+		oldChk := oldByKey[key]
 		if _, exists := newByKey[key]; exists {
 			continue
 		}
@@ -183,7 +188,8 @@ func (g *DiffGenerator) handleIndexChanges(
 	}
 
 	// Added indexes.
-	for key, newIdx := range newByKey {
+	for _, key := range sortedIndexKeys(newByKey) {
+		newIdx := newByKey[key]
 		if _, exists := oldByKey[key]; exists {
 			continue
 		}
@@ -198,7 +204,8 @@ func (g *DiffGenerator) handleIndexChanges(
 	}
 
 	// Removed indexes.
-	for key, oldIdx := range oldByKey {
+	for _, key := range sortedIndexKeys(oldByKey) {
+		oldIdx := oldByKey[key]
 		if _, exists := newByKey[key]; exists {
 			continue
 		}
@@ -500,8 +507,7 @@ func (g *DiffGenerator) handleForeignKeyChanges(mig *migrate.TableDiff, table st
 	if (oldFK == nil) != (newFK == nil) {
 		fkChanged = true
 	} else if oldFK != nil && newFK != nil {
-		if oldFK.Table != newFK.Table || oldFK.Column != newFK.Column ||
-			oldFK.OnDelete != newFK.OnDelete || oldFK.OnUpdate != newFK.OnUpdate {
+		if !foreignKeysEqual(oldFK, newFK) {
 			fkChanged = true
 		}
 	}
@@ -522,6 +528,26 @@ func (g *DiffGenerator) handleForeignKeyChanges(mig *migrate.TableDiff, table st
 			g.addForeignKey(mig, table, newCol)
 		}
 	}
+}
+
+func foreignKeysEqual(a, b *migrate.ForeignKey) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return normalizeRefIdent(a.Table) == normalizeRefIdent(b.Table) &&
+		normalizeRefIdent(a.Column) == normalizeRefIdent(b.Column)
+}
+
+func normalizeRefIdent(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Trim(v, `"'`+"`")
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, ".")
+	last := strings.TrimSpace(parts[len(parts)-1])
+	last = strings.Trim(last, `"'`+"`")
+	return strings.ToLower(last)
 }
 
 func (g *DiffGenerator) handlePKChanges(mig *migrate.TableDiff, table string, oldPKs, newPKs []string, pushUp, pushDownFront func(string)) {
@@ -570,6 +596,33 @@ func makeColumnMap(columns []migrate.ColumnMeta) map[string]migrate.ColumnMeta {
 	return m
 }
 
+func sortedColumnNames(columns map[string]migrate.ColumnMeta) []string {
+	names := make([]string, 0, len(columns))
+	for name := range columns {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedIndexKeys(indexes map[string]migrate.IndexMeta) []string {
+	keys := make([]string, 0, len(indexes))
+	for key := range indexes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedCheckKeys(checks map[string]migrate.CheckMeta) []string {
+	keys := make([]string, 0, len(checks))
+	for key := range checks {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func quoteIdent(name string) string {
 	name = strings.ReplaceAll(name, `"`, `""`)
 	return `"` + name + `"`
@@ -588,6 +641,7 @@ func fkConstraintName(table, column string) string {
 }
 
 func addConstraintIfNotExists(stmt string, constraintName string) string {
+	constraintName = quoteLiteral(constraintName)
 	return fmt.Sprintf(
 		`DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '%s') THEN
@@ -599,6 +653,10 @@ END $$;`, constraintName, stmt)
 func dropConstraintIfExists(table, constraintName string) string {
 	return fmt.Sprintf(`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s`,
 		quoteIdent(table), quoteIdent(constraintName))
+}
+
+func quoteLiteral(v string) string {
+	return strings.ReplaceAll(v, `'`, `''`)
 }
 
 func getForeignKeyAction(action migrate.OnActionType) string {

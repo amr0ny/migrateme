@@ -180,19 +180,29 @@ func (m *Migrator) generateMigrationSQL(
 }
 
 func (m *Migrator) analyzeTableChange(old, new migrate.TableSchema) ChangeType {
+	hasAdded := hasNewColumns(old, new)
+	hasDropped := hasDroppedColumns(old, new)
+	hasType := hasTypeChanges(old, new)
+	hasColumnDef := hasColumnDefinitionChanges(old, new)
+	hasConstraints := hasConstraintChanges(old, new)
+
 	switch {
 	case len(old.Columns) == 0 && len(new.Columns) > 0:
 		return CreateTable
 	case len(old.Columns) > 0 && len(new.Columns) == 0:
 		return DropTable
-	case hasNewColumns(old, new):
+	case hasAdded && !hasDropped && !hasType && !hasColumnDef && !hasConstraints:
 		return AddColumns
-	case hasDroppedColumns(old, new):
+	case hasDropped && !hasAdded && !hasType && !hasColumnDef && !hasConstraints:
 		return DropColumns
-	case hasTypeChanges(old, new):
+	case hasType || hasColumnDef:
 		return ModifyColumns
-	case hasConstraintChanges(old, new):
+	case hasConstraints:
 		return AlterConstraints
+	case hasAdded:
+		return AddColumns
+	case hasDropped:
+		return DropColumns
 	default:
 		return ModifyColumns
 	}

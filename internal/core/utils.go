@@ -175,19 +175,115 @@ func hasTypeChanges(old, new migrate.TableSchema) bool {
 }
 
 func hasConstraintChanges(old, new migrate.TableSchema) bool {
-	oldConstraints := countConstraints(old)
-	newConstraints := countConstraints(new)
-	return oldConstraints != newConstraints
-}
+	oldCols := make(map[string]migrate.ColumnMeta, len(old.Columns))
+	for _, c := range old.Columns {
+		oldCols[c.ColumnName] = c
+	}
+	newCols := make(map[string]migrate.ColumnMeta, len(new.Columns))
+	for _, c := range new.Columns {
+		newCols[c.ColumnName] = c
+	}
 
-func countConstraints(schema migrate.TableSchema) int {
-	count := 0
-	for _, col := range schema.Columns {
-		if col.Attrs.Unique || col.Attrs.IsPK || col.Attrs.ForeignKey != nil {
-			count++
+	for name, oldCol := range oldCols {
+		newCol, exists := newCols[name]
+		if !exists {
+			continue
+		}
+		if oldCol.Attrs.IsPK != newCol.Attrs.IsPK || oldCol.Attrs.Unique != newCol.Attrs.Unique {
+			return true
+		}
+		if !foreignKeysEqualForCore(oldCol.Attrs.ForeignKey, newCol.Attrs.ForeignKey) {
+			return true
 		}
 	}
-	return count
+
+	oldIndexes := make(map[string]struct{}, len(old.Indexes))
+	for _, idx := range old.Indexes {
+		oldIndexes[coreIndexKey(idx)] = struct{}{}
+	}
+	newIndexes := make(map[string]struct{}, len(new.Indexes))
+	for _, idx := range new.Indexes {
+		newIndexes[coreIndexKey(idx)] = struct{}{}
+	}
+	if len(oldIndexes) != len(newIndexes) {
+		return true
+	}
+	for k := range oldIndexes {
+		if _, ok := newIndexes[k]; !ok {
+			return true
+		}
+	}
+
+	oldChecks := make(map[string]struct{}, len(old.Checks))
+	for _, chk := range old.Checks {
+		oldChecks[coreCheckKey(chk)] = struct{}{}
+	}
+	newChecks := make(map[string]struct{}, len(new.Checks))
+	for _, chk := range new.Checks {
+		newChecks[coreCheckKey(chk)] = struct{}{}
+	}
+	if len(oldChecks) != len(newChecks) {
+		return true
+	}
+	for k := range oldChecks {
+		if _, ok := newChecks[k]; !ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasColumnDefinitionChanges(old, new migrate.TableSchema) bool {
+	oldCols := make(map[string]migrate.ColumnMeta, len(old.Columns))
+	for _, c := range old.Columns {
+		oldCols[c.ColumnName] = c
+	}
+	for _, c := range new.Columns {
+		oldCol, exists := oldCols[c.ColumnName]
+		if !exists {
+			continue
+		}
+		oldDef := ""
+		if oldCol.Attrs.Default != nil {
+			oldDef = *oldCol.Attrs.Default
+		}
+		newDef := ""
+		if c.Attrs.Default != nil {
+			newDef = *c.Attrs.Default
+		}
+		if oldCol.Attrs.NotNull != c.Attrs.NotNull || oldDef != newDef {
+			return true
+		}
+	}
+	return false
+}
+
+func coreIndexKey(idx migrate.IndexMeta) string {
+	where := ""
+	if idx.Where != nil {
+		where = strings.TrimSpace(*idx.Where)
+	}
+	return fmt.Sprintf("unique=%t|cols=%s|where=%s", idx.Unique, strings.Join(idx.Columns, "\x1f"), where)
+}
+
+func coreCheckKey(chk migrate.CheckMeta) string {
+	return strings.TrimSpace(chk.Expr)
+}
+
+func foreignKeysEqualForCore(a, b *migrate.ForeignKey) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return normalizeRefName(a.Table) == normalizeRefName(b.Table) &&
+		normalizeRefName(a.Column) == normalizeRefName(b.Column)
+}
+
+func normalizeRefName(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Trim(v, `"'`+"`")
+	parts := strings.Split(v, ".")
+	return strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
 }
 
 func (m *Migrator) hasUnappliedMigrations(ctx context.Context) (bool, error) {

@@ -34,8 +34,6 @@ cd migrateme && go build -o migrateme ./cmd/migrateme
 ```go
 package domain
 
-import "github.com/amr0ny/migrateme/internal/domain"
-
 // table: users
 type User struct {
     ID       int    `db:"id,pk"`
@@ -65,7 +63,7 @@ migrations:
   dir: "migrations"
 
 entity_paths:
-  - "internal/domain/*.go"
+  - "internal/domain/**/*.go"
   - "pkg/models/*.go"
 ```
 
@@ -183,8 +181,9 @@ migrateme/
 ├── internal/
 │   ├── cli/                    # Реализации CLI команд
 │   ├── core/                   # Основная логика миграций
-│   ├── database/               # Работа с подключением к БД
-│   └── domain/                 # Доменные модели
+│   └── database/               # Работа с подключением к БД
+├── example/
+│   └── domain/                 # Пример доменных моделей
 ├── pkg/
 │   ├── config/                 # Управление конфигурацией
 │   ├── discovery/              # Обнаружение сущностей в коде
@@ -292,7 +291,7 @@ type Example struct {
 
 ## 🤝 Участие в разработке
 
-Мы приветствуем вклад в разработку! Пожалуйста, ознакомьтесь с нашим руководством по внесению вклада.
+Мы приветствуем вклад в разработку! Перед началом работы ознакомьтесь с [CONTRIBUTING.md](CONTRIBUTING.md).
 
 1. Сделайте форк репозитория
 2. Создайте ветку для функциональности
@@ -305,7 +304,7 @@ MIT License - смотрите [LICENSE](LICENSE) для деталей.
 
 ## 🆘 Поддержка
 
-- 📖 [Документация](https://github.com/amr0ny/migrateme/docs)
+- 📖 Документация: смотрите этот README и вывод `migrateme --help`
 - 🐛 [Трекер задач](https://github.com/amr0ny/migrateme/issues)
 - 💬 [Обсуждения](https://github.com/amr0ny/migrateme/discussions)
 
