@@ -8,7 +8,7 @@ func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "migrateme",
 		Aliases: []string{"migrate"},
-		Short: "Database migration tool",
+		Short:   "Database migration tool",
 	}
 
 	cmd.AddCommand(NewGenerateCommand())
