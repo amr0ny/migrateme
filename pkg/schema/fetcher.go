@@ -242,14 +242,16 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 			pg_get_expr(ix.indpred, ix.indrelid) AS pred
 		FROM pg_index ix
 		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
 		JOIN pg_class i ON i.oid = ix.indexrelid
 		JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 		LEFT JOIN pg_constraint c ON c.conindid = ix.indexrelid
 		WHERE t.relname = $1
+		  AND n.nspname = current_schema()
 		  AND c.oid IS NULL
 		  AND ix.indisprimary = false
-		GROUP BY i.relname, ix.indisunique;
+		GROUP BY i.relname, ix.indisunique, ix.indpred, ix.indrelid;
 	`
 	idxRows, err := f.pool.Query(ctx, idxQ, table)
 	if err != nil {
