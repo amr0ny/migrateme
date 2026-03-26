@@ -251,6 +251,7 @@ type Example struct {
 // table: posts
 // index: idx_posts_user_id_created_at(user_id, created_at)
 // index: unique idx_posts_slug(slug)
+// index: idx_posts_active_user(user_id) where deleted_at IS NULL
 type Post struct {
     UserID int       `db:"user_id"`
     CreatedAt time.Time `db:"created_at"`
@@ -261,6 +262,24 @@ type Post struct {
 Синтаксис:
 - `// index: [unique ]<idx_name>(col1, col2, ...)`
 - `<idx_name>` опционален: `// index: (col1, col2)` (будет сгенерировано имя)
+- Частичный индекс: `// index: <idx_name>(col1, ...) where <predicate>`
+
+### CHECK constraints из комментариев
+Поддерживаются `struct-level` директивы:
+
+```go
+// table: products
+// check: chk_price_positive(price > 0)
+// check: (qty >= 0) // name optional; migrator will generate it
+type Product struct {
+    Price int `db:"price"`
+    Qty   int `db:"qty"`
+}
+```
+
+Синтаксис:
+- `// check: <chk_name>(<expr>)`
+- `<chk_name>` опционален: `// check: (<expr>)`
 
 ### Значения по умолчанию
 ```go

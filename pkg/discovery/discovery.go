@@ -142,6 +142,10 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 			indexes = append(indexes, extractIndexesComment(gen.Doc)...)
 			indexes = append(indexes, extractIndexesComment(ts.Doc)...)
 
+			checks := make([]migrate.CheckMeta, 0)
+			checks = append(checks, extractChecksComment(gen.Doc)...)
+			checks = append(checks, extractChecksComment(ts.Doc)...)
+
 			// Создаем информацию о сущности
 			ent := migrate.EntityInfo{
 				StructName: ts.Name.Name,
@@ -149,6 +153,7 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 				Package:    pkgPath,
 				FilePath:   filePath,
 				Indexes:    indexes,
+				Checks:     checks,
 			}
 
 			// Расширяем поля (включая встроенные структуры)
@@ -164,8 +169,9 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 //
 //	index: idx_name(col1, col2)
 //	index: unique idx_name(col1, col2)
+//	index: idx_name(col1) where deleted_at IS NULL
 //	index: (col1, col2)  // name optional; migrator will handle name later
-var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)\s*(?:where\s+([^\n]+))?`)
 
 func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 	if doc == nil {
@@ -187,14 +193,16 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 		// m[1] = unique (optional)
 		// m[2] = index name (optional)
 		// m[3] = columns inside parentheses
+		// m[4] = where predicate (optional)
 
-		if len(m) < 4 {
+		if len(m) < 5 {
 			continue
 		}
 
 		unique := strings.TrimSpace(m[1]) != ""
 		name := strings.TrimSpace(m[2])
 		colsRaw := m[3]
+		whereRaw := strings.TrimSpace(m[4])
 
 		var cols []string
 		for _, c := range strings.Split(colsRaw, ",") {
@@ -209,10 +217,60 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 			continue
 		}
 
+		var where *string
+		if whereRaw != "" {
+			where = &whereRaw
+		}
+
 		out = append(out, migrate.IndexMeta{
 			Name:    name,
 			Columns: cols,
 			Unique:  unique,
+			Where:   where,
+		})
+	}
+
+	return out
+}
+
+// Supported syntax (struct-level comments):
+//
+//	check: chk_name(expr)
+//	check: (expr)    // name optional; migrator will handle name later
+var checkDirectiveRE = regexp.MustCompile(`(?mi)check\s*:\s*(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+
+func extractChecksComment(doc *ast.CommentGroup) []migrate.CheckMeta {
+	if doc == nil {
+		return nil
+	}
+
+	text := doc.Text()
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	matches := checkDirectiveRE.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	out := make([]migrate.CheckMeta, 0, len(matches))
+	for _, m := range matches {
+		// m[1] = name (optional)
+		// m[2] = expr
+		if len(m) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(m[1])
+		expr := strings.TrimSpace(m[2])
+		expr = strings.TrimSuffix(expr, ";")
+		expr = strings.TrimSpace(expr)
+		if expr == "" {
+			continue
+		}
+		out = append(out, migrate.CheckMeta{
+			Name: name,
+			Expr: expr,
 		})
 	}
 

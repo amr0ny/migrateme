@@ -11,6 +11,7 @@ type EntityInfo struct {
 	FilePath   string
 	Fields     []FieldInfo
 	Indexes    []IndexMeta
+	Checks     []CheckMeta
 }
 
 type FieldInfo struct {
@@ -25,6 +26,7 @@ type TableSchema struct {
 	TableName string
 	Columns   []ColumnMeta
 	Indexes   []IndexMeta
+	Checks    []CheckMeta
 }
 
 type IndexMeta struct {
@@ -36,6 +38,13 @@ type IndexMeta struct {
 	Columns []string
 
 	Unique bool
+	Where  *string
+}
+
+type CheckMeta struct {
+	// Name is optional; if omitted, migrator generates deterministic name.
+	Name string
+	Expr string
 }
 
 type ColumnMeta struct {
@@ -101,7 +110,13 @@ func NormalizeSchema(s TableSchema) TableSchema {
 
 	for i, idx := range out.Indexes {
 		idx.Columns = normalizeIndexColumns(idx.Columns)
+		idx.Where = normalizeWhere(idx.Where)
 		out.Indexes[i] = idx
+	}
+
+	for i, chk := range out.Checks {
+		chk.Expr = normalizeCheckExpr(chk.Expr)
+		out.Checks[i] = chk
 	}
 
 	return out
@@ -118,6 +133,35 @@ func normalizeIndexColumns(cols []string) []string {
 		out = append(out, c)
 	}
 	return out
+}
+
+func normalizeWhere(where *string) *string {
+	if where == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*where)
+	v = strings.TrimSuffix(v, ";")
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func normalizeCheckExpr(expr string) string {
+	expr = strings.TrimSpace(expr)
+	expr = strings.TrimSuffix(expr, ";")
+	expr = strings.TrimSpace(expr)
+	expr = strings.TrimPrefix(expr, "CHECK")
+	expr = strings.TrimPrefix(expr, "check")
+	expr = strings.TrimSpace(expr)
+
+	// Strip redundant outer parentheses, e.g. "((price > 0))" -> "price > 0".
+	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+		expr = strings.TrimSpace(expr[1 : len(expr)-1])
+	}
+
+	return expr
 }
 
 func normalizePgType(t string) string {
