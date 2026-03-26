@@ -110,7 +110,7 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 		if strings.TrimSpace(name) == "" {
 			name = defaultIndexName(new.TableName, idx.Columns)
 		}
-		mig.Up = append(mig.Up, g.createIndexStatement(new.TableName, name, idx.Columns, idx.Unique))
+		mig.Up = append(mig.Up, g.createIndexStatement(new.TableName, name, idx.Columns, idx.Unique, idx.Where))
 	}
 
 	return mig
@@ -193,7 +193,7 @@ func (g *DiffGenerator) handleIndexChanges(
 			name = defaultIndexName(new.TableName, newIdx.Columns)
 		}
 
-		pushUp(g.createIndexStatement(new.TableName, name, newIdx.Columns, newIdx.Unique))
+		pushUp(g.createIndexStatement(new.TableName, name, newIdx.Columns, newIdx.Unique, newIdx.Where))
 		pushDownFront(fmt.Sprintf(`DROP INDEX IF EXISTS %s`, quoteIdent(name)))
 	}
 
@@ -210,12 +210,16 @@ func (g *DiffGenerator) handleIndexChanges(
 		}
 
 		pushUp(fmt.Sprintf(`DROP INDEX IF EXISTS %s`, quoteIdent(name)))
-		pushDown(g.createIndexStatement(old.TableName, name, oldIdx.Columns, oldIdx.Unique))
+		pushDown(g.createIndexStatement(old.TableName, name, oldIdx.Columns, oldIdx.Unique, oldIdx.Where))
 	}
 }
 
 func indexKey(idx migrate.IndexMeta) string {
-	return fmt.Sprintf("unique=%t|cols=%s", idx.Unique, strings.Join(idx.Columns, "\x1f"))
+	where := ""
+	if idx.Where != nil {
+		where = strings.TrimSpace(*idx.Where)
+	}
+	return fmt.Sprintf("unique=%t|cols=%s|where=%s", idx.Unique, strings.Join(idx.Columns, "\x1f"), where)
 }
 
 func defaultIndexName(table string, cols []string) string {
@@ -236,7 +240,7 @@ func defaultIndexName(table string, cols []string) string {
 	return base
 }
 
-func (g *DiffGenerator) createIndexStatement(table, name string, cols []string, unique bool) string {
+func (g *DiffGenerator) createIndexStatement(table, name string, cols []string, unique bool, where *string) string {
 	parts := make([]string, 0, len(cols))
 	for _, c := range cols {
 		parts = append(parts, quoteIdent(c))
@@ -247,13 +251,17 @@ func (g *DiffGenerator) createIndexStatement(table, name string, cols []string, 
 		uniq = "UNIQUE "
 	}
 
-	return fmt.Sprintf(
+	stmt := fmt.Sprintf(
 		`CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)`,
 		uniq,
 		quoteIdent(name),
 		quoteIdent(table),
 		strings.Join(parts, ", "),
 	)
+	if where != nil && strings.TrimSpace(*where) != "" {
+		stmt += " WHERE " + strings.TrimSpace(*where)
+	}
+	return stmt
 }
 
 func checkKey(chk migrate.CheckMeta) string {

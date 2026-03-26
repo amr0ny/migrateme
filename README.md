@@ -251,6 +251,7 @@ type Example struct {
 // table: posts
 // index: idx_posts_user_id_created_at(user_id, created_at)
 // index: unique idx_posts_slug(slug)
+// index: idx_posts_active_user(user_id) where deleted_at IS NULL
 type Post struct {
     UserID int       `db:"user_id"`
     CreatedAt time.Time `db:"created_at"`
@@ -261,6 +262,7 @@ type Post struct {
 Синтаксис:
 - `// index: [unique ]<idx_name>(col1, col2, ...)`
 - `<idx_name>` опционален: `// index: (col1, col2)` (будет сгенерировано имя)
+- Частичный индекс: `// index: <idx_name>(col1, ...) where <predicate>`
 
 ### CHECK constraints из комментариев
 Поддерживаются `struct-level` директивы:

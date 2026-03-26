@@ -38,6 +38,7 @@ type IndexMeta struct {
 	Columns []string
 
 	Unique bool
+	Where  *string
 }
 
 type CheckMeta struct {
@@ -109,6 +110,7 @@ func NormalizeSchema(s TableSchema) TableSchema {
 
 	for i, idx := range out.Indexes {
 		idx.Columns = normalizeIndexColumns(idx.Columns)
+		idx.Where = normalizeWhere(idx.Where)
 		out.Indexes[i] = idx
 	}
 
@@ -131,6 +133,19 @@ func normalizeIndexColumns(cols []string) []string {
 		out = append(out, c)
 	}
 	return out
+}
+
+func normalizeWhere(where *string) *string {
+	if where == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*where)
+	v = strings.TrimSuffix(v, ";")
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 func normalizeCheckExpr(expr string) string {

@@ -169,8 +169,9 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 //
 //	index: idx_name(col1, col2)
 //	index: unique idx_name(col1, col2)
+//	index: idx_name(col1) where deleted_at IS NULL
 //	index: (col1, col2)  // name optional; migrator will handle name later
-var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)\s*(?:where\s+([^\n]+))?`)
 
 func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 	if doc == nil {
@@ -192,14 +193,16 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 		// m[1] = unique (optional)
 		// m[2] = index name (optional)
 		// m[3] = columns inside parentheses
+		// m[4] = where predicate (optional)
 
-		if len(m) < 4 {
+		if len(m) < 5 {
 			continue
 		}
 
 		unique := strings.TrimSpace(m[1]) != ""
 		name := strings.TrimSpace(m[2])
 		colsRaw := m[3]
+		whereRaw := strings.TrimSpace(m[4])
 
 		var cols []string
 		for _, c := range strings.Split(colsRaw, ",") {
@@ -214,10 +217,16 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 			continue
 		}
 
+		var where *string
+		if whereRaw != "" {
+			where = &whereRaw
+		}
+
 		out = append(out, migrate.IndexMeta{
 			Name:    name,
 			Columns: cols,
 			Unique:  unique,
+			Where:   where,
 		})
 	}
 

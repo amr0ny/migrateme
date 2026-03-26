@@ -170,7 +170,8 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 		SELECT
 			i.relname AS index_name,
 			ix.indisunique AS is_unique,
-			ARRAY_AGG(a.attname ORDER BY k.ord) AS cols
+			ARRAY_AGG(a.attname ORDER BY k.ord) AS cols,
+			pg_get_expr(ix.indpred, ix.indrelid) AS pred
 		FROM pg_index ix
 		JOIN pg_class t ON t.oid = ix.indrelid
 		JOIN pg_class i ON i.oid = ix.indexrelid
@@ -195,7 +196,8 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 			var indexName string
 			var isUnique bool
 			var cols []string
-			if err := idxRows.Scan(&indexName, &isUnique, &cols); err != nil {
+			var pred *string
+			if err := idxRows.Scan(&indexName, &isUnique, &cols, &pred); err != nil {
 				return migrate.TableSchema{}, err
 			}
 			if len(cols) == 0 {
@@ -205,6 +207,7 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 				Name:    indexName,
 				Columns: cols,
 				Unique:  isUnique,
+				Where:   pred,
 			})
 		}
 	}
