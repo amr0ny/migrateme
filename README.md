@@ -3,46 +3,48 @@
 ![Go Version](https://img.shields.io/github/go-mod/go-version/amr0ny/migrateme)
 ![License](https://img.shields.io/github/license/amr0ny/migrateme)
 
-Умный инструмент для миграций баз данных на Go, который автоматически генерирует миграции из ваших структур. Перестаньте писать миграции вручную и позвольте вашему коду определять схему базы данных.
+> 🇷🇺 [Русская версия](README.ru.md)
 
-## 🚀 Особенности
+A code-first database migration tool for Go that automatically generates migrations from your structs. Stop writing SQL by hand — let your code define the schema.
 
-- **Автоматические миграции** - Генерация миграций напрямую из Go структур
-- **Умные зависимости** - Автоматическое разрешение и упорядочивание зависимостей
-- **Безопасные откаты** - Безопасные down-миграции с правильной обработкой зависимостей
-- **Нативный PostgreSQL** - Построен на pgx для максимальной производительности
-- **Обнаружение сущностей** - Автоматическое нахождение мигрируемых сущностей в вашем коде
-- **Режим предпросмотра** - Просмотр изменений перед применением
-- **Транзакционная безопасность** - Все миграции выполняются в транзакциях
-- **Гибкая конфигурация** - YAML, переменные окружения и кодовая конфигурация
+## 🚀 Features
 
-## 📦 Установка
+- **Automatic migrations** — Generate migrations directly from Go structs
+- **Smart dependency resolution** — Automatically resolves and orders FK dependencies
+- **Safe rollbacks** — Down-migrations preserve referential integrity
+- **Multi-dialect foundations** — PostgreSQL and SQLite are supported via dialect adapters
+- **Entity discovery** — Automatically finds migratable structs in your codebase
+- **Dry-run mode** — Preview changes before applying them
+- **Transactional safety** — Every migration runs inside a transaction
+- **Flexible configuration** — YAML, environment variables, or code
+
+## 📦 Installation
 
 ```bash
-# Используя go install
+# Using go install
 go install github.com/amr0ny/migrateme@latest
 
-# Из исходного кода
+# From source
 git clone https://github.com/amr0ny/migrateme
 cd migrateme && go build -o migrateme ./cmd/migrateme
 ```
 
-## ⚡ Быстрый старт
+## ⚡ Quick Start
 
-### 1. Определите ваши сущности
+### 1. Define your entities
 
 ```go
 package domain
 
 // table: users
 type User struct {
-    ID       int    `db:"id,pk"`
-    Name     string `db:"name"`
-    Email    string `db:"email,unique"`
+    ID        int       `db:"id,pk"`
+    Name      string    `db:"name"`
+    Email     string    `db:"email,unique"`
     CreatedAt time.Time `db:"created_at,default=now()"`
 }
 
-// table: posts  
+// table: posts
 type Post struct {
     ID      int    `db:"id,pk"`
     Title   string `db:"title"`
@@ -51,12 +53,13 @@ type Post struct {
 }
 ```
 
-### 2. Создайте конфигурацию
+### 2. Create a config file
 
-Создайте `migrateme.yaml`:
+Create `migrateme.yaml`:
 
 ```yaml
 database:
+  dialect: "postgres" # postgres | sqlite
   dsn: "postgres://user:pass@localhost:5432/mydb"
 
 migrations:
@@ -67,41 +70,40 @@ entity_paths:
   - "pkg/models/*.go"
 ```
 
-### 3. Запустите миграции
+### 3. Run migrations
 
 ```bash
-# Сгенерировать миграции на основе изменений схемы
+# Generate migrations from schema diff
 migrateme generate
 
-# Применить миграции
+# Apply pending migrations
 migrateme run
 
-# Проверить статус
+# Check status
 migrateme status
 
-# Откатить при необходимости
+# Roll back if needed
 migrateme rollback 1
 ```
 
-## 🛠 Команды
+## 🛠 Commands
 
-| Команда | Описание |
+| Command | Description |
 |---------|-------------|
-| `migrateme generate [name]` | Сгенерировать миграции из различий схем |
-| `migrateme run` | Применить все ожидающие миграции |
-| `migrateme status` | Показать примененные и ожидающие миграции |
-| `migrateme rollback <n>` | Откатить последние N миграций |
-| `migrateme create <name>` | Создать шаблон пустой миграции |
+| `migrateme generate [name]` | Generate migrations from schema diff |
+| `migrateme run` | Apply all pending migrations |
+| `migrateme status` | Show applied and pending migrations |
+| `migrateme rollback <n>` | Roll back the last N migrations |
+| `migrateme create <name>` | Create an empty migration template |
 
-## 🔧 Конфигурация
+## 🔧 Configuration
 
-### YAML конфигурация
+### YAML
 
 ```yaml
 database:
+  dialect: "postgres" # postgres | sqlite
   dsn: "postgres://user:pass@localhost:5432/dbname"
-  max_connections: 10
-  min_connections: 2
 
 migrations:
   dir: "migrations"
@@ -116,29 +118,48 @@ entity_paths:
   - "pkg/entities/*.go"
 ```
 
-### Переменные окружения
+### Environment variables
 
-- `DATABASE_DSN` - Строка подключения к базе данных
-- `MIGRATIONS_DIR` - Директория миграций (по умолчанию: "migrations")
-- `LOG_LEVEL` - Уровень логирования (по умолчанию: "info")
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_DIALECT` | `postgres` | Database dialect (`postgres`, `sqlite`) |
+| `DATABASE_DSN` | — | Database connection string |
+| `MIGRATIONS_DIR` | `migrations` | Migrations directory |
+| `LOG_LEVEL` | `info` | Log level |
 
-## 🎯 Продвинутое использование
+### Dialect examples
 
-### Пользовательские имена миграций
+```yaml
+# PostgreSQL
+database:
+  dialect: "postgres"
+  dsn: "postgres://user:pass@localhost:5432/app"
+```
+
+```yaml
+# SQLite (file)
+database:
+  dialect: "sqlite"
+  dsn: "./app.db"
+```
+
+## 🎯 Advanced Usage
+
+### Custom migration names
 
 ```bash
 migrateme generate "add_user_profile"
-# Создает: 20240115120000__add_user_profile__a1b2c3.up.sql
+# Creates: 20240115120000__add_user_profile__a1b2c3.up.sql
 ```
 
-### Режим предпросмотра
+### Dry-run mode
 
 ```bash
 migrateme generate --dry-run
-# Показывает что будет создано без записи файлов
+# Shows what would be created without writing any files
 ```
 
-### Сложные связи между сущностями
+### Complex entity relationships
 
 ```go
 // table: users
@@ -156,77 +177,95 @@ type Profile struct {
 }
 ```
 
-### Поддержка различных типов данных
+### Rich data type support
 
 ```go
 // table: products
 type Product struct {
-    ID          uuid.UUID       `db:"id,pk,type=uuid"`
-    Name        string          `db:"name"`
-    Price       decimal.Decimal `db:"price,type=numeric(10,2)"`
-    Tags        []string        `db:"tags,type=jsonb"`
-    Metadata    map[string]any  `db:"metadata,type=jsonb"`
-    IsActive    bool            `db:"is_active,default=true"`
-    CreatedAt   time.Time       `db:"created_at,default=now()"`
-    UpdatedAt   *time.Time      `db:"updated_at"`
+    ID        uuid.UUID       `db:"id,pk,type=uuid"`
+    Name      string          `db:"name"`
+    Price     decimal.Decimal `db:"price,type=numeric(10,2)"`
+    Tags      []string        `db:"tags,type=jsonb"`
+    Metadata  map[string]any  `db:"metadata,type=jsonb"`
+    IsActive  bool            `db:"is_active,default=true"`
+    CreatedAt time.Time       `db:"created_at,default=now()"`
+    UpdatedAt *time.Time      `db:"updated_at"`
 }
 ```
 
-## 🏗 Архитектура проекта
+## 🏗 Project Structure
 
 ```
 migrateme/
 ├── cmd/migrateme/
-│   └── main.go                 # Точка входа CLI
+│   └── main.go                 # CLI entry point
 ├── internal/
-│   ├── cli/                    # Реализации CLI команд
-│   ├── core/                   # Основная логика миграций
-│   └── database/               # Работа с подключением к БД
+│   ├── cli/                    # CLI command implementations
+│   ├── core/                   # Core migration logic
+│   └── database/               # Database connection handling
 ├── example/
-│   └── domain/                 # Пример доменных моделей
+│   └── domain/                 # Example domain models
 ├── pkg/
-│   ├── config/                 # Управление конфигурацией
-│   ├── discovery/              # Обнаружение сущностей в коде
-│   ├── migrate/                # Типы и интерфейсы миграций
-│   └── schema/                 # Управление схемой БД
-├── migrations/                 # Сгенерированные файлы миграций
-└── migrateme.yaml             # Файл конфигурации
+│   ├── config/                 # Configuration management
+│   ├── discovery/              # Entity discovery (AST parsing)
+│   ├── migrate/                # Migration types and interfaces
+│   └── schema/                 # Schema diffing and management
+├── migrations/                 # Generated migration files
+└── migrateme.yaml              # Configuration file
 ```
 
-## 🔍 Как это работает
+## 🔍 How It Works
 
-1. **Фаза обнаружения** - Сканирует ваш код на наличие структур с комментариями `table: "name"`
-2. **Анализ схемы** - Сравнивает текущую схему БД с определениями в коде
-3. **Граф зависимостей** - Строит граф зависимостей для внешних ключей
-4. **Топологическая сортировка** - Упорядочивает миграции для удовлетворения зависимостей
-5. **Генерация SQL** - Создает безопасный, транзакционный SQL для миграций
-6. **Выполнение** - Применяет миграции в правильном порядке
+1. **Discovery** — Scans your codebase for structs annotated with `// table: <name>`
+2. **Schema analysis** — Compares the current database schema against struct definitions
+3. **Dependency graph** — Builds a directed graph of foreign key relationships
+4. **Topological sort** — Orders migrations to satisfy all dependencies
+5. **SQL generation** — Produces safe, transactional SQL for each change
+6. **Execution** — Applies migrations in the correct order
 
-## 🛡 Функции безопасности
+## 🛡 Safety
 
-- **Оборачивание в транзакции** - Каждая миграция выполняется в транзакции
-- **Валидация зависимостей** - Обнаружение и отчет о циклических зависимостях
-- **Безопасные откаты** - Down-миграции сохраняют целостность данных
-- **Обработка ограничений** - Умная обработка NOT NULL ограничений
-- **Режим предпросмотра** - Просмотр изменений перед выполнением
+- **Transaction wrapping** — Each migration runs atomically inside a transaction
+- **Cycle detection** — Circular FK dependencies are detected and reported before execution
+- **Safe rollbacks** — Down-migrations respect referential integrity
+- **Constraint handling** — NOT NULL constraints are handled gracefully during alterations
+- **Dry-run mode** — Inspect generated SQL before touching the database
 
-## 📋 Требования
+## 📋 Requirements
 
-- Go 1.24 или новее
-- PostgreSQL 12 или новее
+- Go 1.24+
+- PostgreSQL 12+ (for postgres dialect)
+- SQLite 3+ (for sqlite dialect)
 
-## 🎨 Поддерживаемые теги структур
+## 🧭 Dialect support matrix
 
-### Базовые атрибуты
+| Feature | PostgreSQL | SQLite |
+|---------|------------|--------|
+| Create table | ✅ | ✅ |
+| Add column | ✅ | ✅ |
+| Drop/alter column | ✅ | ⚠️ limited |
+| Primary/unique constraints | ✅ | ✅ (limited alter) |
+| Foreign keys | ✅ | ✅ (creation/add-column only) |
+| Indexes | ✅ | ✅ |
+| Check constraints | ✅ | ✅ (limited alter) |
+| Deterministic diff ordering | ✅ | ✅ |
+
+SQLite limitations currently fail fast with explicit errors for unsupported alter operations (for example: changing column type/default/NOT NULL or altering existing CHECK/FK constraints).
+
+## 🎨 Struct Tag Reference
+
+### Basic attributes
+
 ```go
 type Example struct {
-    ID    int    `db:"id,pk"`           // Первичный ключ
-    Name  string `db:"name,notnull"`    // NOT NULL
-    Email string `db:"email,unique"`    // Уникальное ограничение
+    ID    int    `db:"id,pk"`        // Primary key
+    Name  string `db:"name,notnull"` // NOT NULL
+    Email string `db:"email,unique"` // Unique constraint
 }
 ```
 
-### Типы данных
+### Data types
+
 ```go
 type Example struct {
     Price decimal.Decimal `db:"price,type=numeric(10,2)"`
@@ -236,15 +275,17 @@ type Example struct {
 }
 ```
 
-### Внешние ключи
+### Foreign keys
+
 ```go
 type Example struct {
     UserID int `db:"user_id,fk=users.id,delete=cascade,update=restrict"`
 }
 ```
 
-### Индексы (композитные) из комментариев
-Поддерживаются `struct-level` директивы в doc-комментарии над `type`:
+### Indexes (via doc comments)
+
+Composite and partial indexes are declared as struct-level directives in the doc comment above the `type`:
 
 ```go
 // table: posts
@@ -252,35 +293,35 @@ type Example struct {
 // index: unique idx_posts_slug(slug)
 // index: idx_posts_active_user(user_id) where deleted_at IS NULL
 type Post struct {
-    UserID int       `db:"user_id"`
+    UserID    int       `db:"user_id"`
     CreatedAt time.Time `db:"created_at"`
-    Slug   string    `db:"slug"`
+    Slug      string    `db:"slug"`
 }
 ```
 
-Синтаксис:
+Syntax:
 - `// index: [unique ]<idx_name>(col1, col2, ...)`
-- `<idx_name>` опционален: `// index: (col1, col2)` (будет сгенерировано имя)
-- Частичный индекс: `// index: <idx_name>(col1, ...) where <predicate>`
+- Name is optional: `// index: (col1, col2)` — a name will be generated
+- Partial index: `// index: <idx_name>(col1, ...) where <predicate>`
 
-### CHECK constraints из комментариев
-Поддерживаются `struct-level` директивы:
+### CHECK constraints (via doc comments)
 
 ```go
 // table: products
 // check: chk_price_positive(price > 0)
-// check: (qty >= 0) // name optional; migrator will generate it
+// check: (qty >= 0)
 type Product struct {
     Price int `db:"price"`
     Qty   int `db:"qty"`
 }
 ```
 
-Синтаксис:
+Syntax:
 - `// check: <chk_name>(<expr>)`
-- `<chk_name>` опционален: `// check: (<expr>)`
+- Name is optional: `// check: (<expr>)` — a name will be generated
 
-### Значения по умолчанию
+### Default values
+
 ```go
 type Example struct {
     CreatedAt time.Time `db:"created_at,default=now()"`
@@ -289,25 +330,25 @@ type Example struct {
 }
 ```
 
-## 🤝 Участие в разработке
+## 🤝 Contributing
 
-Мы приветствуем вклад в разработку! Перед началом работы ознакомьтесь с [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
 
-1. Сделайте форк репозитория
-2. Создайте ветку для функциональности
-3. Внесите свои изменения
-5. Отправьте Pull Request
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
-## 📄 Лицензия
+## 📄 License
 
-MIT License - смотрите [LICENSE](LICENSE) для деталей.
+MIT License — see [LICENSE](LICENSE) for details.
 
-## 🆘 Поддержка
+## 🆘 Support
 
-- 📖 Документация: смотрите этот README и вывод `migrateme --help`
-- 🐛 [Трекер задач](https://github.com/amr0ny/migrateme/issues)
-- 💬 [Обсуждения](https://github.com/amr0ny/migrateme/discussions)
+- 📖 Documentation: this README and `migrateme --help`
+- 🐛 [Issue tracker](https://github.com/amr0ny/migrateme/issues)
+- 💬 [Discussions](https://github.com/amr0ny/migrateme/discussions)
 
 ---
 
-**MigrateMe** - Потому что схема вашей базы данных должна развиваться так же элегантно, как и ваш код.
+**MigrateMe** — Because your database schema should evolve as elegantly as your code.
