@@ -237,7 +237,7 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 //
 //	check: chk_name(expr)
 //	check: (expr)    // name optional; migrator will handle name later
-var checkDirectiveRE = regexp.MustCompile(`(?mi)check\s*:\s*(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+var checkDirectiveRE = regexp.MustCompile(`(?mi)check\s*:\s*(?:([A-Za-z0-9_\-]+)\s*)?\((.*)\)`)
 
 func extractChecksComment(doc *ast.CommentGroup) []migrate.CheckMeta {
 	if doc == nil {
