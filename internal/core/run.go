@@ -51,12 +51,8 @@ func (m *Migrator) Run(ctx context.Context) ([]string, error) {
 			continue
 		}
 
-		if err := m.db.ExecSQL(ctx, upSQL); err != nil {
+		if err := m.db.ApplyMigration(ctx, base, upSQL); err != nil {
 			return appliedNow, fmt.Errorf("apply %s: %w", base, err)
-		}
-
-		if err := m.db.RecordMigration(ctx, base); err != nil {
-			return appliedNow, fmt.Errorf("record migration %s: %w", base, err)
 		}
 
 		appliedNow = append(appliedNow, base)

@@ -48,6 +48,14 @@ func NewDB(ctx context.Context, connString string, dialect Dialect, migrationsTa
 			_ = db.Close()
 			return nil, fmt.Errorf("failed to ping sqlite database: %w", err)
 		}
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to enable sqlite foreign_keys pragma: %w", err)
+		}
+		if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to set sqlite busy_timeout pragma: %w", err)
+		}
 		return &DB{
 			Dialect:         DialectSQLite,
 			SQLDB:           db,
@@ -81,6 +89,9 @@ func (db *DB) Close() {
 
 func (db *DB) exec(ctx context.Context, query string, args ...any) error {
 	if db.Dialect == DialectSQLite {
+		if _, err := db.SQLDB.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+			return err
+		}
 		_, err := db.SQLDB.ExecContext(ctx, query, args...)
 		return err
 	}
@@ -161,4 +172,73 @@ func (db *DB) RemoveMigration(ctx context.Context, name string) error {
 		return db.exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE name = ?`, db.migrationsTable), name)
 	}
 	return db.exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE name = $1`, db.migrationsTable), name)
+}
+
+func (db *DB) ApplyMigration(ctx context.Context, name string, sqlText string) error {
+	if db.Dialect != DialectSQLite {
+		if err := db.ExecSQL(ctx, sqlText); err != nil {
+			return err
+		}
+		return db.RecordMigration(ctx, name)
+	}
+	if hasExplicitTx(sqlText) {
+		if err := db.ExecSQL(ctx, sqlText); err != nil {
+			return err
+		}
+		return db.RecordMigration(ctx, name)
+	}
+	tx, err := db.SQLDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, sqlText); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s(name) VALUES (?)`, db.migrationsTable), name); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (db *DB) RevertMigration(ctx context.Context, name string, sqlText string) error {
+	if db.Dialect != DialectSQLite {
+		if err := db.ExecSQL(ctx, sqlText); err != nil {
+			return err
+		}
+		return db.RemoveMigration(ctx, name)
+	}
+	if hasExplicitTx(sqlText) {
+		if err := db.ExecSQL(ctx, sqlText); err != nil {
+			return err
+		}
+		return db.RemoveMigration(ctx, name)
+	}
+	tx, err := db.SQLDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, sqlText); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE name = ?`, db.migrationsTable), name); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func hasExplicitTx(sqlText string) bool {
+	l := strings.ToLower(sqlText)
+	return strings.Contains(l, "begin;") || strings.Contains(l, "commit;")
 }
