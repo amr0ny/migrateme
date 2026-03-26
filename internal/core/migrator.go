@@ -65,7 +65,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 	}
 
 	schemaFetcher := schema2.NewFetcher(m.db.Pool)
-	newSchemas, dependencyGraph, err := m.buildSchemaDependencies(ctx, schemaFetcher)
+	newSchemas, oldSchemas, dependencyGraph, err := m.buildSchemaDependencies(ctx, schemaFetcher)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return nil, fmt.Errorf("failed to sort tables topologically: %w", err)
 	}
 
-	changes, upStatements, downStatements := m.generateMigrationSQL(ctx, sortedTables, newSchemas, schemaFetcher)
+	changes, upStatements, downStatements := m.generateMigrationSQL(sortedTables, newSchemas, oldSchemas)
 	if len(upStatements) == 0 {
 		return &GenerateResult{
 			CreatedFiles: []string{},
@@ -102,10 +102,12 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 }
 func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2.Fetcher) (
 	map[string]migrate.TableSchema,
+	map[string]migrate.TableSchema,
 	map[string][]string,
 	error,
 ) {
 	newSchemas := make(map[string]migrate.TableSchema)
+	oldSchemas := make(map[string]migrate.TableSchema)
 	dependencyGraph := make(map[string][]string)
 
 	for table, builder := range m.config.Registry {
@@ -116,12 +118,10 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 	allTables := getTableNames(newSchemas)
 	sort.Strings(allTables)
 
-	oldSchemas := make(map[string]migrate.TableSchema)
 	for _, table := range allTables {
 		oldSchema, err := fetcher.Fetch(ctx, table)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "schema fetch for %s failed — treating as new table: %v\n", table, err)
-			oldSchema = migrate.TableSchema{}
+			return nil, nil, nil, fmt.Errorf("fetch schema for %s: %w", table, err)
 		}
 		oldSchemas[table] = oldSchema
 
@@ -137,14 +137,13 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 		}
 	}
 
-	return newSchemas, dependencyGraph, nil
+	return newSchemas, oldSchemas, dependencyGraph, nil
 }
 
 func (m *Migrator) generateMigrationSQL(
-	ctx context.Context,
 	sortedTables []string,
 	newSchemas map[string]migrate.TableSchema,
-	fetcher *schema2.Fetcher,
+	oldSchemas map[string]migrate.TableSchema,
 ) ([]TableChange, []string, []string) {
 	var changes []TableChange
 	var allUpStatements []string
@@ -154,8 +153,7 @@ func (m *Migrator) generateMigrationSQL(
 
 	for _, table := range sortedTables {
 		newSchema := migrate.NormalizeSchema(newSchemas[table])
-		oldSchema, _ := fetcher.Fetch(ctx, table)
-		oldSchema = migrate.NormalizeSchema(oldSchema)
+		oldSchema := migrate.NormalizeSchema(oldSchemas[table])
 
 		diff := diffGenerator.DiffSchemas(oldSchema, newSchema)
 		if diff.IsEmpty() {
@@ -182,19 +180,29 @@ func (m *Migrator) generateMigrationSQL(
 }
 
 func (m *Migrator) analyzeTableChange(old, new migrate.TableSchema) ChangeType {
+	hasAdded := hasNewColumns(old, new)
+	hasDropped := hasDroppedColumns(old, new)
+	hasType := hasTypeChanges(old, new)
+	hasColumnDef := hasColumnDefinitionChanges(old, new)
+	hasConstraints := hasConstraintChanges(old, new)
+
 	switch {
 	case len(old.Columns) == 0 && len(new.Columns) > 0:
 		return CreateTable
 	case len(old.Columns) > 0 && len(new.Columns) == 0:
 		return DropTable
-	case hasNewColumns(old, new):
+	case hasAdded && !hasDropped && !hasType && !hasColumnDef && !hasConstraints:
 		return AddColumns
-	case hasDroppedColumns(old, new):
+	case hasDropped && !hasAdded && !hasType && !hasColumnDef && !hasConstraints:
 		return DropColumns
-	case hasTypeChanges(old, new):
+	case hasType || hasColumnDef:
 		return ModifyColumns
-	case hasConstraintChanges(old, new):
+	case hasConstraints:
 		return AlterConstraints
+	case hasAdded:
+		return AddColumns
+	case hasDropped:
+		return DropColumns
 	default:
 		return ModifyColumns
 	}
