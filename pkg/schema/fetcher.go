@@ -163,6 +163,52 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 		fkRows.Close()
 	}
 
+	// ---------- Non-constraint indexes (incl. composite) ----------
+	// Exclude indexes backing constraints by filtering out indexes referenced by pg_constraint.conindid.
+	// This keeps us focused on regular indexes declared by `CREATE INDEX` (including UNIQUE indexes).
+	const idxQ = `
+		SELECT
+			i.relname AS index_name,
+			ix.indisunique AS is_unique,
+			ARRAY_AGG(a.attname ORDER BY k.ord) AS cols
+		FROM pg_index ix
+		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		LEFT JOIN pg_constraint c ON c.conindid = ix.indexrelid
+		WHERE t.relname = $1
+		  AND c.oid IS NULL
+		  AND ix.indisprimary = false
+		GROUP BY i.relname, ix.indisunique;
+	`
+	idxRows, err := f.pool.Query(ctx, idxQ, table)
+	if err != nil {
+		// indexes are optional for migrations generation; treat fetch failure as "no indexes"
+		idxRows = nil
+	}
+
+	indexes := make([]migrate.IndexMeta, 0)
+	if idxRows != nil {
+		defer idxRows.Close()
+		for idxRows.Next() {
+			var indexName string
+			var isUnique bool
+			var cols []string
+			if err := idxRows.Scan(&indexName, &isUnique, &cols); err != nil {
+				return migrate.TableSchema{}, err
+			}
+			if len(cols) == 0 {
+				continue
+			}
+			indexes = append(indexes, migrate.IndexMeta{
+				Name:    indexName,
+				Columns: cols,
+				Unique:  isUnique,
+			})
+		}
+	}
+
 	cols := make([]migrate.ColumnMeta, 0, len(colsMap))
 	for _, col := range colsMap {
 		cols = append(cols, col)
@@ -171,5 +217,6 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 	return migrate.TableSchema{
 		TableName: table,
 		Columns:   cols,
+		Indexes:   indexes,
 	}, nil
 }

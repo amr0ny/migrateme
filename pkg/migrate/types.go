@@ -10,6 +10,7 @@ type EntityInfo struct {
 	Package    string
 	FilePath   string
 	Fields     []FieldInfo
+	Indexes    []IndexMeta
 }
 
 type FieldInfo struct {
@@ -23,6 +24,18 @@ type FieldInfo struct {
 type TableSchema struct {
 	TableName string
 	Columns   []ColumnMeta
+	Indexes   []IndexMeta
+}
+
+type IndexMeta struct {
+	// Name is optional in code comments; when missing, the migrator will generate
+	// a deterministic name for CREATE statements.
+	Name string
+
+	// Columns must be in index order (composite indexes are ordered).
+	Columns []string
+
+	Unique bool
 }
 
 type ColumnMeta struct {
@@ -86,6 +99,24 @@ func NormalizeSchema(s TableSchema) TableSchema {
 		out.Columns[i] = c
 	}
 
+	for i, idx := range out.Indexes {
+		idx.Columns = normalizeIndexColumns(idx.Columns)
+		out.Indexes[i] = idx
+	}
+
+	return out
+}
+
+func normalizeIndexColumns(cols []string) []string {
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
+		c = strings.TrimSpace(c)
+		c = strings.Trim(c, `"'`+"`")
+		if c == "" {
+			continue
+		}
+		out = append(out, c)
+	}
 	return out
 }
 

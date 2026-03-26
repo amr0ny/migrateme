@@ -244,6 +244,24 @@ type Example struct {
 }
 ```
 
+### Индексы (композитные) из комментариев
+Поддерживаются `struct-level` директивы в doc-комментарии над `type`:
+
+```go
+// table: posts
+// index: idx_posts_user_id_created_at(user_id, created_at)
+// index: unique idx_posts_slug(slug)
+type Post struct {
+    UserID int       `db:"user_id"`
+    CreatedAt time.Time `db:"created_at"`
+    Slug   string    `db:"slug"`
+}
+```
+
+Синтаксис:
+- `// index: [unique ]<idx_name>(col1, col2, ...)`
+- `<idx_name>` опционален: `// index: (col1, col2)` (будет сгенерировано имя)
+
 ### Значения по умолчанию
 ```go
 type Example struct {

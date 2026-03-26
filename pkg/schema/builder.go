@@ -35,6 +35,7 @@ func BuildSchema(e migrate.EntityInfo) migrate.TableSchema {
 	schema := migrate.TableSchema{
 		TableName: e.TableName,
 		Columns:   make([]migrate.ColumnMeta, 0),
+		Indexes:   make([]migrate.IndexMeta, 0),
 	}
 
 	for _, f := range e.Fields {
@@ -47,6 +48,9 @@ func BuildSchema(e migrate.EntityInfo) migrate.TableSchema {
 			Attrs:      attrs,
 		})
 	}
+
+	// Struct-level index directives (composite indexes) are parsed from comments.
+	schema.Indexes = append(schema.Indexes, e.Indexes...)
 
 	return schema
 }

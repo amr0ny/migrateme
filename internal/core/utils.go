@@ -94,7 +94,7 @@ func topologicalSort(graph map[string][]string, allTables []string) ([]string, e
 
 		// Если после этого все еще есть проблемы
 		if len(result) != len(allTables) {
-			return nil, fmt.Errorf(cycleInfo)
+			return nil, fmt.Errorf("%s", cycleInfo)
 		}
 	}
 
