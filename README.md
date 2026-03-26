@@ -243,14 +243,14 @@ migrateme/
 |---------|------------|--------|
 | Create table | ✅ | ✅ |
 | Add column | ✅ | ✅ |
-| Drop/alter column | ✅ | ⚠️ limited |
-| Primary/unique constraints | ✅ | ✅ (limited alter) |
-| Foreign keys | ✅ | ✅ (creation/add-column only) |
+| Drop/alter column | ✅ | ✅ (auto-rebuild plan) |
+| Primary/unique constraints | ✅ | ✅ (auto-rebuild plan) |
+| Foreign keys | ✅ | ✅ (direct + auto-rebuild) |
 | Indexes | ✅ | ✅ |
-| Check constraints | ✅ | ✅ (limited alter) |
+| Check constraints | ✅ | ✅ (direct + auto-rebuild) |
 | Deterministic diff ordering | ✅ | ✅ |
 
-SQLite limitations currently fail fast with explicit errors for unsupported alter operations (for example: changing column type/default/NOT NULL or altering existing CHECK/FK constraints).
+For SQLite, incompatible `ALTER TABLE` changes are planned as deterministic table rebuilds (create temp table, copy data, swap, recreate indexes). The generator also emits compatibility notes for best-effort mappings such as `uuid/jsonb/timestamptz -> TEXT` and `boolean -> INTEGER`.
 
 ## 🎨 Struct Tag Reference
 
