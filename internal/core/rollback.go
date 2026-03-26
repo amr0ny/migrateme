@@ -44,7 +44,7 @@ func (m *Migrator) Rollback(ctx context.Context, n int) ([]string, error) {
 			return rolledBack, fmt.Errorf("migration %s has empty down file", base)
 		}
 
-		if _, err := m.db.Pool.Exec(ctx, downSQL); err != nil {
+		if err := m.db.ExecSQL(ctx, downSQL); err != nil {
 			return rolledBack, fmt.Errorf("rollback %s: %w", base, err)
 		}
 

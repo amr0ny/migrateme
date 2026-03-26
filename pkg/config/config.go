@@ -18,7 +18,8 @@ import (
 )
 
 type DatabaseConfig struct {
-	DSN string `yaml:"dsn" env:"DATABASE_DSN"`
+	DSN     string `yaml:"dsn" env:"DATABASE_DSN"`
+	Dialect string `yaml:"dialect" env:"DATABASE_DIALECT"`
 }
 
 type MigrationsConfig struct {
@@ -46,6 +47,13 @@ func (c *Config) GetDSN() string {
 		return env
 	}
 	return c.Database.DSN
+}
+
+func (c *Config) GetDialect() database.Dialect {
+	if env := os.Getenv("DATABASE_DIALECT"); env != "" {
+		return database.ParseDialect(env)
+	}
+	return database.ParseDialect(c.Database.Dialect)
 }
 
 func (c *Config) GetMigrationsDir() string {
@@ -93,9 +101,13 @@ func (c *Config) HasEntityPaths() bool {
 }
 
 func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
-	db, err := database.NewDB(ctx, c.GetDSN())
+	db, err := database.NewDB(ctx, c.GetDSN(), c.GetDialect(), c.GetMigrationsTable())
 	if err != nil {
 		return nil, err
+	}
+	if db.Pool == nil {
+		db.Close()
+		return nil, fmt.Errorf("connection pool is only available for postgres dialect")
 	}
 	return db.Pool, nil
 }
@@ -106,6 +118,9 @@ func (c *Config) NewPool(ctx context.Context) (*pgxpool.Pool, error) {
 
 func loadConfig(configPath ...string) (*Config, error) {
 	cfg := &Config{
+		Database: DatabaseConfig{
+			Dialect: string(database.DialectPostgres),
+		},
 		Migrations: MigrationsConfig{
 			Dir:       "migrations",
 			TableName: "schema_migrations",
@@ -167,6 +182,9 @@ func loadEnvConfig(cfg *Config) {
 	// Database config
 	if v := os.Getenv("DATABASE_DSN"); v != "" {
 		cfg.Database.DSN = v
+	}
+	if v := os.Getenv("DATABASE_DIALECT"); v != "" {
+		cfg.Database.Dialect = v
 	}
 
 	// Migrations config

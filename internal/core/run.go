@@ -51,7 +51,7 @@ func (m *Migrator) Run(ctx context.Context) ([]string, error) {
 			continue
 		}
 
-		if _, err := m.db.Pool.Exec(ctx, upSQL); err != nil {
+		if err := m.db.ExecSQL(ctx, upSQL); err != nil {
 			return appliedNow, fmt.Errorf("apply %s: %w", base, err)
 		}
 

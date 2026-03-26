@@ -64,7 +64,10 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return nil, fmt.Errorf("failed to create migrations directory: %w", err)
 	}
 
-	schemaFetcher := schema2.NewFetcher(m.db.Pool)
+	schemaFetcher, err := m.newSchemaFetcher()
+	if err != nil {
+		return nil, err
+	}
 	newSchemas, oldSchemas, dependencyGraph, err := m.buildSchemaDependencies(ctx, schemaFetcher)
 	if err != nil {
 		return nil, err
@@ -75,7 +78,10 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		return nil, fmt.Errorf("failed to sort tables topologically: %w", err)
 	}
 
-	changes, upStatements, downStatements := m.generateMigrationSQL(sortedTables, newSchemas, oldSchemas)
+	changes, upStatements, downStatements, err := m.generateMigrationSQL(sortedTables, newSchemas, oldSchemas)
+	if err != nil {
+		return nil, err
+	}
 	if len(upStatements) == 0 {
 		return &GenerateResult{
 			CreatedFiles: []string{},
@@ -100,7 +106,7 @@ func (m *Migrator) Generate(ctx context.Context, opts GenerateOptions) (*Generat
 		Changes:      changes,
 	}, nil
 }
-func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2.Fetcher) (
+func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher schema2.TableFetcher) (
 	map[string]migrate.TableSchema,
 	map[string]migrate.TableSchema,
 	map[string][]string,
@@ -144,16 +150,26 @@ func (m *Migrator) generateMigrationSQL(
 	sortedTables []string,
 	newSchemas map[string]migrate.TableSchema,
 	oldSchemas map[string]migrate.TableSchema,
-) ([]TableChange, []string, []string) {
+) ([]TableChange, []string, []string, error) {
 	var changes []TableChange
 	var allUpStatements []string
 	var allDownStatements []string
 
-	diffGenerator := schema2.NewDiffGenerator()
+	var diffGenerator schema2.SchemaDiffer
+	if m.db.Dialect == database.DialectSQLite {
+		diffGenerator = schema2.NewSQLiteDiffGenerator()
+	} else {
+		diffGenerator = schema2.NewDiffGenerator()
+	}
 
 	for _, table := range sortedTables {
 		newSchema := migrate.NormalizeSchema(newSchemas[table])
 		oldSchema := migrate.NormalizeSchema(oldSchemas[table])
+		if m.db.Dialect == database.DialectSQLite {
+			if err := schema2.ValidateSQLiteDiffSupport(oldSchema, newSchema); err != nil {
+				return nil, nil, nil, fmt.Errorf("sqlite unsupported schema change for table %s: %w", table, err)
+			}
+		}
 
 		diff := diffGenerator.DiffSchemas(oldSchema, newSchema)
 		if diff.IsEmpty() {
@@ -176,7 +192,22 @@ func (m *Migrator) generateMigrationSQL(
 		allDownStatements = append(tableDown, allDownStatements...)
 	}
 
-	return changes, allUpStatements, allDownStatements
+	return changes, allUpStatements, allDownStatements, nil
+}
+
+func (m *Migrator) newSchemaFetcher() (schema2.TableFetcher, error) {
+	switch m.db.Dialect {
+	case database.DialectSQLite:
+		if m.db.SQLDB == nil {
+			return nil, fmt.Errorf("sqlite database connection is not initialized")
+		}
+		return schema2.NewSQLiteFetcher(m.db.SQLDB), nil
+	default:
+		if m.db.Pool == nil {
+			return nil, fmt.Errorf("postgres connection pool is not initialized")
+		}
+		return schema2.NewFetcher(m.db.Pool), nil
+	}
 }
 
 func (m *Migrator) analyzeTableChange(old, new migrate.TableSchema) ChangeType {

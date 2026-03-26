@@ -38,7 +38,7 @@ func NewGenerateCommand() *cobra.Command {
 			fmt.Printf("Found %d entities for migration\n", len(cfg.Registry))
 
 			ctx := context.Background()
-			db, err := database.NewDB(ctx, cfg.GetDSN())
+			db, err := database.NewDB(ctx, cfg.GetDSN(), cfg.GetDialect(), cfg.GetMigrationsTable())
 			if err != nil {
 				return fmt.Errorf("failed to connect to database: %w", err)
 			}
