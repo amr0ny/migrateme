@@ -45,8 +45,34 @@ func TestValidateSQLiteDiffSupportRejectsTypeChange(t *testing.T) {
 			{ColumnName: "age", Attrs: migrate.ColumnAttributes{PgType: "text"}},
 		},
 	}
-	if err := ValidateSQLiteDiffSupport(old, newSchema); err == nil {
-		t.Fatalf("expected validation error for sqlite type change")
+	planner := NewSQLitePlanner()
+	diff := planner.DiffSchemas(old, newSchema)
+	if len(diff.Up) == 0 {
+		t.Fatalf("expected rebuild statements for sqlite type change")
+	}
+	if !strings.Contains(strings.Join(diff.Up, "\n"), `ALTER TABLE "__migrateme_tmp_users" RENAME TO "users"`) {
+		t.Fatalf("expected temp-table rebuild plan, got: %v", diff.Up)
+	}
+	diags := planner.Diagnostics()
+	if len(diags) == 0 {
+		t.Fatalf("expected diagnostics for rebuild plan")
+	}
+}
+
+func TestValidateSQLiteCapabilitiesWarnsOnMappedTypes(t *testing.T) {
+	t.Parallel()
+
+	s := migrate.TableSchema{
+		TableName: "events",
+		Columns: []migrate.ColumnMeta{
+			{ColumnName: "id", Attrs: migrate.ColumnAttributes{PgType: "uuid"}},
+			{ColumnName: "meta", Attrs: migrate.ColumnAttributes{PgType: "jsonb"}},
+			{ColumnName: "active", Attrs: migrate.ColumnAttributes{PgType: "boolean"}},
+		},
+	}
+	diags := ValidateSQLiteCapabilities(s)
+	if len(diags) < 3 {
+		t.Fatalf("expected mapped type diagnostics, got: %#v", diags)
 	}
 }
 
