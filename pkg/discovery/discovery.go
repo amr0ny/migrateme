@@ -137,12 +137,18 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 				continue // пропускаем структуры без аннотации таблицы
 			}
 
+			// Composite index directives are stored in struct-level comments.
+			indexes := make([]migrate.IndexMeta, 0)
+			indexes = append(indexes, extractIndexesComment(gen.Doc)...)
+			indexes = append(indexes, extractIndexesComment(ts.Doc)...)
+
 			// Создаем информацию о сущности
 			ent := migrate.EntityInfo{
 				StructName: ts.Name.Name,
 				TableName:  tn,
 				Package:    pkgPath,
 				FilePath:   filePath,
+				Indexes:    indexes,
 			}
 
 			// Расширяем поля (включая встроенные структуры)
@@ -152,4 +158,63 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 	}
 
 	return results, nil
+}
+
+// Supported syntax (struct-level comments):
+//
+//	index: idx_name(col1, col2)
+//	index: unique idx_name(col1, col2)
+//	index: (col1, col2)  // name optional; migrator will handle name later
+var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+
+func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
+	if doc == nil {
+		return nil
+	}
+
+	text := doc.Text()
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	matches := indexDirectiveRE.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	out := make([]migrate.IndexMeta, 0, len(matches))
+	for _, m := range matches {
+		// m[1] = unique (optional)
+		// m[2] = index name (optional)
+		// m[3] = columns inside parentheses
+
+		if len(m) < 4 {
+			continue
+		}
+
+		unique := strings.TrimSpace(m[1]) != ""
+		name := strings.TrimSpace(m[2])
+		colsRaw := m[3]
+
+		var cols []string
+		for _, c := range strings.Split(colsRaw, ",") {
+			c = strings.TrimSpace(c)
+			c = strings.Trim(c, `"'`+"`")
+			if c != "" {
+				cols = append(cols, c)
+			}
+		}
+
+		if len(cols) == 0 {
+			continue
+		}
+
+		out = append(out, migrate.IndexMeta{
+			Name:    name,
+			Columns: cols,
+			Unique:  unique,
+		})
+	}
+
+	return out
 }

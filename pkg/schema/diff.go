@@ -20,6 +20,7 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 
 	pushUp := func(s string) { mig.Up = append(mig.Up, s) }
 	pushDownFront := func(s string) { mig.Down = append([]string{s}, mig.Down...) }
+	pushDown := func(s string) { mig.Down = append(mig.Down, s) }
 
 	if len(oldCols) == 0 && len(newCols) > 0 {
 		return g.generateCreateTableDiff(new)
@@ -45,6 +46,8 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 	if !stringSlicesEqual(oldPKs, newPKs) {
 		g.handlePKChanges(&mig, new.TableName, oldPKs, newPKs, pushUp, pushDownFront)
 	}
+
+	g.handleIndexChanges(&mig, old, new, pushUp, pushDownFront, pushDown)
 
 	return mig
 }
@@ -91,7 +94,107 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 		}
 	}
 
+	// Create indexes after table/constraints exist.
+	for _, idx := range new.Indexes {
+		name := idx.Name
+		if strings.TrimSpace(name) == "" {
+			name = defaultIndexName(new.TableName, idx.Columns)
+		}
+		mig.Up = append(mig.Up, g.createIndexStatement(new.TableName, name, idx.Columns, idx.Unique))
+	}
+
 	return mig
+}
+
+func (g *DiffGenerator) handleIndexChanges(
+	mig *migrate.TableDiff,
+	old, new migrate.TableSchema,
+	pushUp func(string),
+	pushDownFront func(string),
+	pushDown func(string),
+) {
+	oldByKey := make(map[string]migrate.IndexMeta, len(old.Indexes))
+	for _, idx := range old.Indexes {
+		oldByKey[indexKey(idx)] = idx
+	}
+
+	newByKey := make(map[string]migrate.IndexMeta, len(new.Indexes))
+	for _, idx := range new.Indexes {
+		newByKey[indexKey(idx)] = idx
+	}
+
+	// Added indexes.
+	for key, newIdx := range newByKey {
+		if _, exists := oldByKey[key]; exists {
+			continue
+		}
+
+		name := newIdx.Name
+		if strings.TrimSpace(name) == "" {
+			name = defaultIndexName(new.TableName, newIdx.Columns)
+		}
+
+		pushUp(g.createIndexStatement(new.TableName, name, newIdx.Columns, newIdx.Unique))
+		pushDownFront(fmt.Sprintf(`DROP INDEX IF EXISTS %s`, quoteIdent(name)))
+	}
+
+	// Removed indexes.
+	for key, oldIdx := range oldByKey {
+		if _, exists := newByKey[key]; exists {
+			continue
+		}
+
+		name := oldIdx.Name
+		if strings.TrimSpace(name) == "" {
+			// Shouldn't happen for fetched DB indexes, but keep it safe.
+			name = defaultIndexName(old.TableName, oldIdx.Columns)
+		}
+
+		pushUp(fmt.Sprintf(`DROP INDEX IF EXISTS %s`, quoteIdent(name)))
+		pushDown(g.createIndexStatement(old.TableName, name, oldIdx.Columns, oldIdx.Unique))
+	}
+}
+
+func indexKey(idx migrate.IndexMeta) string {
+	return fmt.Sprintf("unique=%t|cols=%s", idx.Unique, strings.Join(idx.Columns, "\x1f"))
+}
+
+func defaultIndexName(table string, cols []string) string {
+	base := fmt.Sprintf("idx_%s_%s", table, strings.Join(cols, "_"))
+
+	// Keep index names reasonably safe/deterministic.
+	base = strings.ReplaceAll(base, " ", "_")
+	base = strings.ReplaceAll(base, "-", "_")
+	base = strings.ReplaceAll(base, ".", "_")
+	base = strings.ReplaceAll(base, "/", "_")
+	base = strings.Trim(base, "_")
+
+	if len(base) > 60 {
+		base = base[:60]
+		base = strings.Trim(base, "_")
+	}
+
+	return base
+}
+
+func (g *DiffGenerator) createIndexStatement(table, name string, cols []string, unique bool) string {
+	parts := make([]string, 0, len(cols))
+	for _, c := range cols {
+		parts = append(parts, quoteIdent(c))
+	}
+
+	uniq := ""
+	if unique {
+		uniq = "UNIQUE "
+	}
+
+	return fmt.Sprintf(
+		`CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)`,
+		uniq,
+		quoteIdent(name),
+		quoteIdent(table),
+		strings.Join(parts, ", "),
+	)
 }
 
 func (g *DiffGenerator) handleAddedColumn(mig *migrate.TableDiff, table string, col migrate.ColumnMeta, pushUp, pushDownFront func(string)) {
