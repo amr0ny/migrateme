@@ -121,7 +121,7 @@ func (m *Migrator) buildSchemaDependencies(ctx context.Context, fetcher *schema2
 	for _, table := range allTables {
 		oldSchema, err := fetcher.Fetch(ctx, table)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("fetch schema for %s: %w", table, err)
+			return nil, nil, nil, fmt.Errorf("failed to fetch schema for table %s: %w", table, err)
 		}
 		oldSchemas[table] = oldSchema
 

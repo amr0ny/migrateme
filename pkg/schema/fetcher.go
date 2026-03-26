@@ -11,6 +11,7 @@ import (
 
 type PgxQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 type Fetcher struct {
@@ -21,6 +22,24 @@ func NewFetcher(pool PgxQuerier) *Fetcher {
 	return &Fetcher{pool: pool}
 }
 func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema, error) {
+	// First, detect relation existence explicitly so we can distinguish:
+	// - table truly does not exist
+	// - metadata query unexpectedly returned no columns for an existing table
+	const existsQ = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relkind = 'r'
+			  AND c.relname = $1
+			  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		);
+	`
+	var tableExists bool
+	if err := f.pool.QueryRow(ctx, existsQ, table).Scan(&tableExists); err != nil {
+		return migrate.TableSchema{}, fmt.Errorf("query table existence: %w", err)
+	}
+
 	// ---------- Columns ----------
 	const colsQ = `
 		SELECT
@@ -74,6 +93,13 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 	}
 	if err := rows.Err(); err != nil {
 		return migrate.TableSchema{}, fmt.Errorf("iterate columns: %w", err)
+	}
+
+	if tableExists && len(colsMap) == 0 {
+		return migrate.TableSchema{}, fmt.Errorf(
+			"table %s exists but no columns were fetched (check search_path/permissions/table naming)",
+			table,
+		)
 	}
 
 	// ---------- PRIMARY KEY (+ real constraint name) ----------
