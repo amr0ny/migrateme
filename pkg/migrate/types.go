@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -166,21 +167,60 @@ func normalizeCheckExpr(expr string) string {
 
 func normalizePgType(t string) string {
 	t = strings.ToLower(strings.TrimSpace(t))
+	isArray := strings.HasSuffix(t, "[]")
+	if isArray {
+		t = strings.TrimSuffix(t, "[]")
+	}
+	t = strings.Join(strings.Fields(t), " ")
 	switch t {
+	case "int2", "smallint":
+		t = "smallint"
+	case "int4", "integer", "int":
+		t = "integer"
+	case "int8", "bigint":
+		t = "bigint"
+	case "bool", "boolean":
+		t = "boolean"
+	case "float4", "real":
+		t = "real"
+	case "float8", "double precision":
+		t = "double precision"
+	case "timestamp without time zone", "timestamp":
+		t = "timestamp"
+	case "timestamp with time zone", "timestamptz":
+		t = "timestamptz"
 	case "character varying", "varchar", "varchar()", "varchar(255)":
-		return "varchar"
+		t = "varchar"
+	default:
+		if m := varcharWithLenRe.FindStringSubmatch(t); len(m) == 2 {
+			t = "varchar(" + m[1] + ")"
+		} else if strings.HasPrefix(t, "character varying(") {
+			t = strings.Replace(t, "character varying(", "varchar(", 1)
+		} else if strings.HasPrefix(t, "timestamp with time zone") {
+			t = strings.Replace(t, "timestamp with time zone", "timestamptz", 1)
+		} else if strings.HasPrefix(t, "timestamp without time zone") {
+			t = strings.Replace(t, "timestamp without time zone", "timestamp", 1)
+		}
+	}
+	if isArray {
+		return t + "[]"
 	}
 	return t
 }
 
 func normalizeAction(a OnActionType) OnActionType {
-	a = OnActionType(strings.ToUpper(strings.TrimSpace(string(a))))
+	s := strings.ToUpper(strings.TrimSpace(string(a)))
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	a = OnActionType(s)
 	if a == "" {
 		return NoAction
 	}
 
 	return a
 }
+
+var varcharWithLenRe = regexp.MustCompile(`^character varying\((\d+)\)$`)
 
 func normalizeDefault(d *string) *string {
 	if d == nil {
