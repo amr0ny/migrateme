@@ -48,6 +48,7 @@ func (g *DiffGenerator) DiffSchemas(old, new migrate.TableSchema) migrate.TableD
 	}
 
 	g.handleIndexChanges(&mig, old, new, pushUp, pushDownFront, pushDown)
+	g.handleCheckChanges(&mig, old, new, pushUp, pushDownFront, pushDown)
 
 	return mig
 }
@@ -94,6 +95,15 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 		}
 	}
 
+	// Add check constraints after table exists.
+	for _, chk := range new.Checks {
+		name := chk.Name
+		if strings.TrimSpace(name) == "" {
+			name = defaultCheckName(new.TableName, chk.Expr)
+		}
+		mig.Up = append(mig.Up, g.addCheckStatement(new.TableName, name, chk.Expr))
+	}
+
 	// Create indexes after table/constraints exist.
 	for _, idx := range new.Indexes {
 		name := idx.Name
@@ -104,6 +114,55 @@ func (g *DiffGenerator) generateCreateTableDiff(new migrate.TableSchema) migrate
 	}
 
 	return mig
+}
+
+func (g *DiffGenerator) handleCheckChanges(
+	mig *migrate.TableDiff,
+	old, new migrate.TableSchema,
+	pushUp func(string),
+	pushDownFront func(string),
+	pushDown func(string),
+) {
+	oldByKey := make(map[string]migrate.CheckMeta, len(old.Checks))
+	for _, chk := range old.Checks {
+		oldByKey[checkKey(chk)] = chk
+	}
+
+	newByKey := make(map[string]migrate.CheckMeta, len(new.Checks))
+	for _, chk := range new.Checks {
+		newByKey[checkKey(chk)] = chk
+	}
+
+	// Added checks.
+	for key, newChk := range newByKey {
+		if _, exists := oldByKey[key]; exists {
+			continue
+		}
+
+		name := newChk.Name
+		if strings.TrimSpace(name) == "" {
+			name = defaultCheckName(new.TableName, newChk.Expr)
+		}
+
+		pushUp(g.addCheckStatement(new.TableName, name, newChk.Expr))
+		pushDownFront(dropConstraintIfExists(new.TableName, name))
+	}
+
+	// Removed checks.
+	for key, oldChk := range oldByKey {
+		if _, exists := newByKey[key]; exists {
+			continue
+		}
+
+		name := oldChk.Name
+		if strings.TrimSpace(name) == "" {
+			// Shouldn't happen for fetched DB constraints, but keep it safe.
+			name = defaultCheckName(old.TableName, oldChk.Expr)
+		}
+
+		pushUp(dropConstraintIfExists(old.TableName, name))
+		pushDown(g.addCheckStatement(old.TableName, name, oldChk.Expr))
+	}
 }
 
 func (g *DiffGenerator) handleIndexChanges(
@@ -195,6 +254,55 @@ func (g *DiffGenerator) createIndexStatement(table, name string, cols []string, 
 		quoteIdent(table),
 		strings.Join(parts, ", "),
 	)
+}
+
+func checkKey(chk migrate.CheckMeta) string {
+	// Name is not part of identity; expr defines semantics.
+	return fmt.Sprintf("expr=%s", strings.TrimSpace(chk.Expr))
+}
+
+func defaultCheckName(table, expr string) string {
+	// Deterministic-ish name based on expression. Keep it simple and avoid new deps.
+	e := strings.ToLower(strings.TrimSpace(expr))
+	e = strings.ReplaceAll(e, " ", "_")
+	e = strings.ReplaceAll(e, "\t", "_")
+	e = strings.ReplaceAll(e, "\n", "_")
+	e = strings.ReplaceAll(e, "\r", "_")
+	e = strings.ReplaceAll(e, "(", "")
+	e = strings.ReplaceAll(e, ")", "")
+	e = strings.ReplaceAll(e, "'", "")
+	e = strings.ReplaceAll(e, "\"", "")
+
+	for strings.Contains(e, "__") {
+		e = strings.ReplaceAll(e, "__", "_")
+	}
+	e = strings.Trim(e, "_")
+	if e == "" {
+		e = "check"
+	}
+
+	base := fmt.Sprintf("chk_%s_%s", table, e)
+	if len(base) > 60 {
+		base = base[:60]
+		base = strings.Trim(base, "_")
+	}
+	return base
+}
+
+func (g *DiffGenerator) addCheckStatement(table, name, expr string) string {
+	expr = strings.TrimSpace(expr)
+	expr = strings.TrimSuffix(expr, ";")
+	expr = strings.TrimSpace(expr)
+
+	stmt := fmt.Sprintf(
+		`ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)`,
+		quoteIdent(table),
+		quoteIdent(name),
+		expr,
+	)
+
+	// Mirror the unique/fk approach: only add if missing.
+	return addConstraintIfNotExists(stmt, name)
 }
 
 func (g *DiffGenerator) handleAddedColumn(mig *migrate.TableDiff, table string, col migrate.ColumnMeta, pushUp, pushDownFront func(string)) {

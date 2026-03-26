@@ -262,6 +262,23 @@ type Post struct {
 - `// index: [unique ]<idx_name>(col1, col2, ...)`
 - `<idx_name>` опционален: `// index: (col1, col2)` (будет сгенерировано имя)
 
+### CHECK constraints из комментариев
+Поддерживаются `struct-level` директивы:
+
+```go
+// table: products
+// check: chk_price_positive(price > 0)
+// check: (qty >= 0) // name optional; migrator will generate it
+type Product struct {
+    Price int `db:"price"`
+    Qty   int `db:"qty"`
+}
+```
+
+Синтаксис:
+- `// check: <chk_name>(<expr>)`
+- `<chk_name>` опционален: `// check: (<expr>)`
+
 ### Значения по умолчанию
 ```go
 type Example struct {

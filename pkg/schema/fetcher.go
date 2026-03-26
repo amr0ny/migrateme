@@ -209,6 +209,48 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 		}
 	}
 
+	// ---------- CHECK constraints ----------
+	const chkQ = `
+		SELECT
+			c.conname AS constraint_name,
+			pg_get_constraintdef(c.oid) AS condef
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		WHERE t.relname = $1 AND c.contype = 'c';
+	`
+	chkRows, err := f.pool.Query(ctx, chkQ, table)
+	checks := make([]migrate.CheckMeta, 0)
+	if err == nil {
+		defer chkRows.Close()
+		for chkRows.Next() {
+			var name, def string
+			if err := chkRows.Scan(&name, &def); err != nil {
+				return migrate.TableSchema{}, err
+			}
+
+			// def is like: "CHECK ((price > 0))"
+			def = strings.TrimSpace(def)
+			def = strings.TrimSuffix(def, ";")
+			def = strings.TrimSpace(def)
+			def = strings.TrimPrefix(def, "CHECK")
+			def = strings.TrimPrefix(def, "check")
+			def = strings.TrimSpace(def)
+
+			for strings.HasPrefix(def, "(") && strings.HasSuffix(def, ")") {
+				def = strings.TrimSpace(def[1 : len(def)-1])
+			}
+
+			if def == "" {
+				continue
+			}
+
+			checks = append(checks, migrate.CheckMeta{
+				Name: name,
+				Expr: def,
+			})
+		}
+	}
+
 	cols := make([]migrate.ColumnMeta, 0, len(colsMap))
 	for _, col := range colsMap {
 		cols = append(cols, col)
@@ -218,5 +260,6 @@ func (f *Fetcher) Fetch(ctx context.Context, table string) (migrate.TableSchema,
 		TableName: table,
 		Columns:   cols,
 		Indexes:   indexes,
+		Checks:    checks,
 	}, nil
 }

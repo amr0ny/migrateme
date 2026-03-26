@@ -142,6 +142,10 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 			indexes = append(indexes, extractIndexesComment(gen.Doc)...)
 			indexes = append(indexes, extractIndexesComment(ts.Doc)...)
 
+			checks := make([]migrate.CheckMeta, 0)
+			checks = append(checks, extractChecksComment(gen.Doc)...)
+			checks = append(checks, extractChecksComment(ts.Doc)...)
+
 			// Создаем информацию о сущности
 			ent := migrate.EntityInfo{
 				StructName: ts.Name.Name,
@@ -149,6 +153,7 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 				Package:    pkgPath,
 				FilePath:   filePath,
 				Indexes:    indexes,
+				Checks:     checks,
 			}
 
 			// Расширяем поля (включая встроенные структуры)
@@ -213,6 +218,50 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 			Name:    name,
 			Columns: cols,
 			Unique:  unique,
+		})
+	}
+
+	return out
+}
+
+// Supported syntax (struct-level comments):
+//
+//	check: chk_name(expr)
+//	check: (expr)    // name optional; migrator will handle name later
+var checkDirectiveRE = regexp.MustCompile(`(?mi)check\s*:\s*(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)`)
+
+func extractChecksComment(doc *ast.CommentGroup) []migrate.CheckMeta {
+	if doc == nil {
+		return nil
+	}
+
+	text := doc.Text()
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	matches := checkDirectiveRE.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	out := make([]migrate.CheckMeta, 0, len(matches))
+	for _, m := range matches {
+		// m[1] = name (optional)
+		// m[2] = expr
+		if len(m) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(m[1])
+		expr := strings.TrimSpace(m[2])
+		expr = strings.TrimSuffix(expr, ";")
+		expr = strings.TrimSpace(expr)
+		if expr == "" {
+			continue
+		}
+		out = append(out, migrate.CheckMeta{
+			Name: name,
+			Expr: expr,
 		})
 	}
 
