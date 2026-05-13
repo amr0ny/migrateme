@@ -170,8 +170,13 @@ func discoverInFile(ctx *DiscoverContext, filePath string) ([]migrate.EntityInfo
 //	index: idx_name(col1, col2)
 //	index: unique idx_name(col1, col2)
 //	index: idx_name(col1) where deleted_at IS NULL
+//	index: idx_name(GREATEST(a, COALESCE(b, c)))
 //	index: (col1, col2)  // name optional; migrator will handle name later
-var indexDirectiveRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?\(([^)]*)\)\s*(?:where\s+([^\n]+))?`)
+//
+// The regex only captures the prefix (unique flag + name); the column list
+// and optional WHERE clause are extracted with paren-balanced helpers so that
+// function expressions such as GREATEST(a, COALESCE(b, c)) are preserved.
+var indexDirectivePrefixRE = regexp.MustCompile(`(?mi)index\s*:\s*(unique\s+)?(?:([A-Za-z0-9_\-]+)\s*)?(\()`)
 
 func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 	if doc == nil {
@@ -183,36 +188,41 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 		return nil
 	}
 
-	matches := indexDirectiveRE.FindAllStringSubmatch(text, -1)
+	matches := indexDirectivePrefixRE.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 
 	out := make([]migrate.IndexMeta, 0, len(matches))
-	for _, m := range matches {
-		// m[1] = unique (optional)
-		// m[2] = index name (optional)
-		// m[3] = columns inside parentheses
-		// m[4] = where predicate (optional)
+	for _, loc := range matches {
+		// loc[2],loc[3] = unique group
+		// loc[4],loc[5] = name group
+		// loc[6]        = start of '('
 
-		if len(m) < 5 {
+		unique := loc[2] >= 0 && strings.TrimSpace(text[loc[2]:loc[3]]) != ""
+		name := ""
+		if loc[4] >= 0 {
+			name = strings.TrimSpace(text[loc[4]:loc[5]])
+		}
+
+		openParen := loc[6] // index of '(' in text
+		colsRaw, afterParen, ok := extractBalanced(text, openParen)
+		if !ok {
 			continue
 		}
 
-		unique := strings.TrimSpace(m[1]) != ""
-		name := strings.TrimSpace(m[2])
-		colsRaw := m[3]
-		whereRaw := strings.TrimSpace(m[4])
-
-		var cols []string
-		for _, c := range strings.Split(colsRaw, ",") {
-			c = strings.TrimSpace(c)
-			c = strings.Trim(c, `"'`+"`")
-			if c != "" {
-				cols = append(cols, c)
-			}
+		// Optional WHERE clause on the same line after the closing paren.
+		whereRaw := ""
+		rest := text[afterParen+1:]
+		if idx := strings.IndexByte(rest, '\n'); idx >= 0 {
+			rest = rest[:idx]
+		}
+		rest = strings.TrimSpace(rest)
+		if strings.HasPrefix(strings.ToLower(rest), "where ") {
+			whereRaw = strings.TrimSpace(rest[6:])
 		}
 
+		cols := splitColumnsParenAware(colsRaw)
 		if len(cols) == 0 {
 			continue
 		}
@@ -231,6 +241,57 @@ func extractIndexesComment(doc *ast.CommentGroup) []migrate.IndexMeta {
 	}
 
 	return out
+}
+
+// extractBalanced returns the content inside the parenthesis that starts at
+// s[start] (which must be '('), and the index of the matching ')'.
+func extractBalanced(s string, start int) (content string, end int, ok bool) {
+	if start >= len(s) || s[start] != '(' {
+		return "", 0, false
+	}
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return s[start+1 : i], i, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
+// splitColumnsParenAware splits a comma-separated column list while ignoring
+// commas that appear inside nested parentheses (e.g. function arguments).
+func splitColumnsParenAware(s string) []string {
+	var cols []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				c := strings.TrimSpace(s[start:i])
+				c = strings.Trim(c, `"'`+"`")
+				if c != "" {
+					cols = append(cols, c)
+				}
+				start = i + 1
+			}
+		}
+	}
+	if tail := strings.TrimSpace(s[start:]); tail != "" {
+		tail = strings.Trim(tail, `"'`+"`")
+		cols = append(cols, tail)
+	}
+	return cols
 }
 
 // Supported syntax (struct-level comments):

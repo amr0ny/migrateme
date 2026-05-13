@@ -5,6 +5,62 @@ import (
 	"testing"
 )
 
+func TestExtractIndexesComment_HandlesNestedFunctions(t *testing.T) {
+	t.Parallel()
+
+	doc := &ast.CommentGroup{
+		List: []*ast.Comment{
+			{Text: "// index: idx_solutions_change_window_at(GREATEST(updated_at, COALESCE(published_at, updated_at)))"},
+		},
+	}
+
+	indexes := extractIndexesComment(doc)
+	if len(indexes) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(indexes))
+	}
+
+	idx := indexes[0]
+	if idx.Name != "idx_solutions_change_window_at" {
+		t.Fatalf("unexpected name: %q", idx.Name)
+	}
+	if len(idx.Columns) != 1 {
+		t.Fatalf("expected 1 column expression, got %d: %v", len(idx.Columns), idx.Columns)
+	}
+	want := "GREATEST(updated_at, COALESCE(published_at, updated_at))"
+	if idx.Columns[0] != want {
+		t.Fatalf("unexpected column: got %q, want %q", idx.Columns[0], want)
+	}
+}
+
+func TestExtractIndexesComment_HandlesSimpleCompositeIndex(t *testing.T) {
+	t.Parallel()
+
+	doc := &ast.CommentGroup{
+		List: []*ast.Comment{
+			{Text: "// index: unique idx_name(col1, col2) where deleted_at IS NULL"},
+		},
+	}
+
+	indexes := extractIndexesComment(doc)
+	if len(indexes) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(indexes))
+	}
+
+	idx := indexes[0]
+	if !idx.Unique {
+		t.Fatal("expected unique index")
+	}
+	if idx.Name != "idx_name" {
+		t.Fatalf("unexpected name: %q", idx.Name)
+	}
+	if len(idx.Columns) != 2 || idx.Columns[0] != "col1" || idx.Columns[1] != "col2" {
+		t.Fatalf("unexpected columns: %v", idx.Columns)
+	}
+	if idx.Where == nil || *idx.Where != "deleted_at IS NULL" {
+		t.Fatalf("unexpected where: %v", idx.Where)
+	}
+}
+
 func TestExtractChecksComment_HandlesInnerParentheses(t *testing.T) {
 	t.Parallel()
 
